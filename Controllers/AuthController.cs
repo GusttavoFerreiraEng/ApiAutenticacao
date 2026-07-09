@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ApiAutenticacao.Services;
 using Microsoft.AspNetCore.RateLimiting;
+using System.Security.Cryptography;
 using FluentValidation;
 using Models;
 
@@ -15,7 +16,6 @@ public class AuthController : ControllerBase
     private readonly AuthService _authService; 
     private readonly IValidator<RegisterDTO> _registerValidator;
 
-    // Agora o Controller pede o Serviço de Autenticação
     public AuthController(AuthService authService, AppDbContext context, IValidator<RegisterDTO> registerValidator)
     {
         _authService = authService;
@@ -23,8 +23,7 @@ public class AuthController : ControllerBase
         _registerValidator = registerValidator;
     }
 
-
-[HttpPost("register")]
+    [HttpPost("register")]
     public IActionResult Register([FromBody] RegisterDTO registerDto)
     {
         var validationResult = _registerValidator.Validate(registerDto);
@@ -44,74 +43,113 @@ public class AuthController : ControllerBase
         }
     }
 
-[HttpPost("login")]
-public IActionResult Login([FromBody] LoginDTO loginDto)
-{
-    try
+    [HttpPost("login")]
+    public IActionResult Login([FromBody] LoginDTO loginDto)
     {
-        var tokenPronto = _authService.Login(loginDto); 
-        
-        var cookieOptions = new CookieOptions
+        try
         {
-            HttpOnly = true, 
-            Secure = true,  
-            SameSite = SameSiteMode.Strict, 
-            Expires = DateTime.Now.AddHours(2) 
-        };
+            var (jwt, refreshToken) = _authService.Login(loginDto); 
+            
+            var jwtCookieOptions = new CookieOptions
+            {
+                HttpOnly = true, 
+                Secure = true,  
+                SameSite = SameSiteMode.Strict, 
+                Expires = DateTime.Now.AddMinutes(15) 
+            };
+            Response.Cookies.Append("jwt", jwt, jwtCookieOptions);
 
-        Response.Cookies.Append("jwt", tokenPronto, cookieOptions);
+            var refreshCookieOptions = new CookieOptions
+            {
+                HttpOnly = true, 
+                Secure = true,  
+                SameSite = SameSiteMode.Strict, 
+                Expires = DateTime.Now.AddDays(7) 
+            };
+            Response.Cookies.Append("refreshToken", refreshToken, refreshCookieOptions);
 
-        return Ok(new { Mensagem = "Login realizado! Token guardado." });
+            return Ok(new { Mensagem = "Login realizado! Crachá e Chave Mestra guardados nos cofres." });
+        }
+        catch (Exception ex)
+        {
+            return Unauthorized(ex.Message);
+        }
     }
-    catch (Exception ex)
+
+    [HttpPost("refresh")]
+    public IActionResult Refresh()
     {
-        return Unauthorized(ex.Message);
+        try
+        {
+            var refreshTokenAntigo = Request.Cookies["refreshToken"];
+            
+            if (string.IsNullOrEmpty(refreshTokenAntigo))
+            {
+                return Unauthorized("Chave Mestra não encontrada. Faça login novamente.");
+            }
+
+            var (novoJwt, novoRefreshToken) = _authService.RenovarToken(refreshTokenAntigo);
+
+            var jwtCookieOptions = new CookieOptions
+            {
+                HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.Now.AddMinutes(15)
+            };
+            Response.Cookies.Append("jwt", novoJwt, jwtCookieOptions);
+
+            var refreshCookieOptions = new CookieOptions
+            {
+                HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.Now.AddDays(7)
+            };
+            Response.Cookies.Append("refreshToken", novoRefreshToken, refreshCookieOptions);
+
+            return Ok(new { Mensagem = "Tokens renovados com sucesso sem o usuário perceber!" });
+        }
+        catch (Exception ex)
+        {
+            return Unauthorized(ex.Message);
+        }
     }
-}
 
-[HttpPost("logout")]
-public IActionResult Logout()
+    [HttpPost("logout")]
+    public IActionResult Logout()
     {
-     var tokenNoCofre = Request.Cookies["jwt"];
+        var tokenNoCofre = Request.Cookies["jwt"];
 
-     if (string.IsNullOrEmpty(tokenNoCofre))
-    {
-#pragma warning disable CS8601 // Possível atribuição de referência nula.
+        if (!string.IsNullOrEmpty(tokenNoCofre))
+        {
             var tokenRevogado = new InvalidatedToken
             {
                 Token = tokenNoCofre,
-                ExpirationDate = DateTime.Now.AddHours(2)
+                ExpirationDate = DateTime.Now.AddMinutes(15) // Agora expira em 15 min junto com o token
             };
-#pragma warning restore CS8601 // Possível atribuição de referência nula.
 
             _context.InvalidatedTokens.Add(tokenRevogado);
             _context.SaveChanges();
-    }    
-    
+        }    
 
-{
-    Response.Cookies.Delete("jwt");
-    
-    return Ok(new { Mensagem = "Você saiu do sistema!" });
-}
-}
+        Response.Cookies.Delete("jwt");
+        Response.Cookies.Delete("refreshToken");
+        
+        return Ok(new { Mensagem = "Você saiu do sistema e os cofres foram destruídos!" });
+    }
 
-[HttpPost("promover/{email}")]
-public IActionResult Promover(string email)
-{
-    try
+    [HttpPost("promover/{email}")]
+    public IActionResult Promover(string email)
     {
-        _authService.PromoverParaAdmin(email);
-        return Ok($"O usuário {email} agora é o Chefe!");
+        try
+        {
+            _authService.PromoverParaAdmin(email);
+            return Ok($"O usuário {email} agora é o Chefe!");
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
-    catch (Exception ex)
-    {
-        return BadRequest(ex.Message);
-    }
-}
-[Authorize]
-[HttpGet("perfil")]
-public IActionResult MeuPerfil()   
+
+    [Authorize]
+    [HttpGet("perfil")]
+    public IActionResult MeuPerfil()   
     {
         var emailUser = User.FindFirst(ClaimTypes.Email)?.Value;
         var userLog = _context.Users.FirstOrDefault(u => u.Email == emailUser);
@@ -129,11 +167,10 @@ public IActionResult MeuPerfil()
         });
     }
 
-[Authorize(Roles = "Admin")]
-[HttpGet("admin")]
-public IActionResult AdminOnly()
+    [Authorize(Roles = "Admin")]
+    [HttpGet("admin")]
+    public IActionResult AdminOnly()
     {
-        return Ok("Bem-vindo, Admin!.");
+        return Ok("Bem-vindo, Admin!");
     }
-
 }

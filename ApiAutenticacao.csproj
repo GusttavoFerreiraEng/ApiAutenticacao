@@ -19,4 +19,11 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="ApiAutenticacao.Tests\**" />
+    <Content Remove="ApiAutenticacao.Tests\**" />
+    <EmbeddedResource Remove="ApiAutenticacao.Tests\**" />
+    <None Remove="ApiAutenticacao.Tests\**" />
+  </ItemGroup>
+
 </Project>

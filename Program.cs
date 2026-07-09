@@ -49,6 +49,26 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
                 context.Token = tokenNoCofre;
             }
             return Task.CompletedTask;
+        },
+
+        OnTokenValidated = context =>
+        {
+            // Pede o banco de dados emprestado para o C#
+            var dbContext = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+            
+            // Pega o token atual (seja do Cookie ou do Cabeçalho do Swagger)
+            var tokenAtual = context.Request.Cookies["jwt"] ?? 
+                             context.Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+
+            // Checa se o token está na tabela de banidos
+            var taNaListaNegra = dbContext.InvalidatedTokens.Any(t => t.Token == tokenAtual);
+            
+            if (taNaListaNegra)
+            {
+                context.Fail("Este token foi revogado pelo usuário (Lista Negra). Acesso Negado!");
+            }
+
+            return Task.CompletedTask;
         }
     };
 });

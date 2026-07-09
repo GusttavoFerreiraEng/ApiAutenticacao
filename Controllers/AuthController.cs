@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using ApiAutenticacao.Services;
 using Microsoft.AspNetCore.RateLimiting;
 using FluentValidation;
+using Models;
 
 [ApiController]
 [EnableRateLimiting("LoginRateLimit")]
@@ -70,10 +71,29 @@ public IActionResult Login([FromBody] LoginDTO loginDto)
 
 [HttpPost("logout")]
 public IActionResult Logout()
+    {
+     var tokenNoCofre = Request.Cookies["jwt"];
+
+     if (string.IsNullOrEmpty(tokenNoCofre))
+    {
+#pragma warning disable CS8601 // Possível atribuição de referência nula.
+            var tokenRevogado = new InvalidatedToken
+            {
+                Token = tokenNoCofre,
+                ExpirationDate = DateTime.Now.AddHours(2)
+            };
+#pragma warning restore CS8601 // Possível atribuição de referência nula.
+
+            _context.InvalidatedTokens.Add(tokenRevogado);
+            _context.SaveChanges();
+    }    
+    
+
 {
     Response.Cookies.Delete("jwt");
     
     return Ok(new { Mensagem = "Você saiu do sistema!" });
+}
 }
 
 [HttpPost("promover/{email}")]

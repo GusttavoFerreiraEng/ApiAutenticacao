@@ -1,0 +1,11 @@
+# Pastas de compilação do C#/.NET
+bin/
+obj/
+
+# Bancos de dados locais
+*.db
+*.sqlite
+*.sqlite3
+
+# Configurações de ambiente local (opcional, mas recomendado)
+appsettings.Development.json

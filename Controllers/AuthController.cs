@@ -1,67 +1,111 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Text;
 using System.Security.Claims;
-using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using ApiAutenticacao.Services;
 using Models;
+using Microsoft.AspNetCore.RateLimiting;
 
 [ApiController]
+[EnableRateLimiting("ratelimitingviado")]
 [Route("api/[controller]")]
 public class AuthController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly AuthService _authService; 
 
-    public AuthController(AppDbContext context)
+    // Agora o Controller pede o Serviço de Autenticação
+    public AuthController(AuthService authService, AppDbContext context)
     {
+        _authService = authService;
         _context = context;
     }
 
 
 [HttpPost("register")]
-public IActionResult Register([FromBody] RegisterDTO registerDto)
-{
-    var existingUser = _context.Users.FirstOrDefault(u => u.Email == registerDto.Email);
-    if (existingUser != null)
+    public IActionResult Register([FromBody] RegisterDTO registerDto)
     {
-        return BadRequest("Email já cadastrado.");
+        try
+        {
+            _authService.Registrar(registerDto); 
+            return Ok("Usuário cadastrado com sucesso.");
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ex.Message); 
+        }
     }
-    // Cria um novo usuário com o email e a senha fornecidos
-    var user = new User
-    {
-        Email = registerDto.Email,
-        PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password)
-    };
-    _context.Users.Add(user);
-    _context.SaveChanges();
-    return Ok("Usuário cadastrado com sucesso.");
-}
 
 [HttpPost("login")]
 public IActionResult Login([FromBody] LoginDTO loginDto)
 {
-    //Verifica se o usuário existe e se a senha está correta
-    var user = _context.Users.FirstOrDefault(u => u.Email == loginDto.Email);
-    if (user == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
+    try
     {
-        return Unauthorized("Email ou senha inválidos.");
+        var tokenPronto = _authService.Login(loginDto); 
+        
+        var cookieOptions = new CookieOptions
+        {
+            HttpOnly = true, 
+            Secure = true,  
+            SameSite = SameSiteMode.Strict, 
+            Expires = DateTime.Now.AddHours(2) 
+        };
+
+        Response.Cookies.Append("jwt", tokenPronto, cookieOptions);
+
+        return Ok(new { Mensagem = "Login realizado! Token guardado." });
+    }
+    catch (Exception ex)
+    {
+        return Unauthorized(ex.Message);
+    }
+}
+
+[HttpPost("logout")]
+public IActionResult Logout()
+{
+    Response.Cookies.Delete("jwt");
+    
+    return Ok(new { Mensagem = "Você saiu do sistema!" });
+}
+
+[HttpPost("promover/{email}")]
+public IActionResult Promover(string email)
+{
+    try
+    {
+        _authService.PromoverParaAdmin(email);
+        return Ok($"O usuário {email} agora é o Chefe!");
+    }
+    catch (Exception ex)
+    {
+        return BadRequest(ex.Message);
+    }
+}
+[Authorize]
+[HttpGet("perfil")]
+public IActionResult MeuPerfil()   
+    {
+        var emailUser = User.FindFirst(ClaimTypes.Email)?.Value;
+        var userLog = _context.Users.FirstOrDefault(u => u.Email == emailUser);
+
+        if (userLog == null)
+        {
+            return NotFound("Usuário não encontrado.");
+        }
+
+        return Ok(new 
+        {
+            Mensage = "Bem-vindo!",
+            SeuId = userLog.Id,
+            SeuEmail = userLog.Email
+        });
     }
 
-    var chaveTexto = "MinhaSuperChaveSecretaDoEstagiario123"; // No mínimo 16 caracteres
-    var chaveBytes = Encoding.UTF8.GetBytes(chaveTexto);
-    var chaveCriptografica = new SymmetricSecurityKey(chaveBytes);
-    var credenciais = new SigningCredentials(chaveCriptografica, SecurityAlgorithms.HmacSha256);
+[Authorize(Roles = "Admin")]
+[HttpGet("admin")]
+public IActionResult AdminOnly()
+    {
+        return Ok("Bem-vindo, Admin!.");
+    }
 
-    var informacoes = new[] { new Claim("email", user.Email) };
-
-    var tokenObjeto = new JwtSecurityToken(
-        claims: informacoes, 
-        expires: DateTime.Now.AddHours(2), 
-        signingCredentials: credenciais
-    );
-
-    var impressora = new JwtSecurityTokenHandler();
-    var tokenPronto = impressora.WriteToken(tokenObjeto);
-
-    return Ok(new { Token = tokenPronto });
-}
 }

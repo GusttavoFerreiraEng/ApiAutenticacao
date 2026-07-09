@@ -9,8 +9,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ApiAutenticacao.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260626002136_InitialCreate")]
-    partial class InitialCreate
+    [Migration("20260709201752_AddRoleColumn")]
+    partial class AddRoleColumn
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -20,7 +20,7 @@ namespace ApiAutenticacao.Migrations
 
             modelBuilder.Entity("Models.User", b =>
                 {
-                    b.Property<int>("UserId")
+                    b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
@@ -32,7 +32,14 @@ namespace ApiAutenticacao.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.HasKey("UserId");
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
 
                     b.ToTable("Users");
                 });

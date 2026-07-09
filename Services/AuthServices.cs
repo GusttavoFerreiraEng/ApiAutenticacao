@@ -59,7 +59,7 @@ namespace ApiAutenticacao.Services
             
             if (user == null || user.RefreshTokenExpiryTime <= DateTime.Now)
             {
-                throw new Exception("Chave Mestra inválida ou expirada. Faça login novamente.");
+                throw new Exception("Chave inválida ou expirada. Faça login novamente.");
             }
 
             var novoJwt = GerarJwt(user);

@@ -68,7 +68,7 @@ public class AuthController : ControllerBase
             };
             Response.Cookies.Append("refreshToken", refreshToken, refreshCookieOptions);
 
-            return Ok(new { Mensagem = "Login realizado! Crachá e Chave Mestra guardados nos cofres." });
+            return Ok(new { Mensagem = "Login realizado!" });
         }
         catch (Exception ex)
         {
@@ -85,7 +85,7 @@ public class AuthController : ControllerBase
             
             if (string.IsNullOrEmpty(refreshTokenAntigo))
             {
-                return Unauthorized("Chave Mestra não encontrada. Faça login novamente.");
+                return Unauthorized("Chave não encontrada. Faça login novamente.");
             }
 
             var (novoJwt, novoRefreshToken) = _authService.RenovarToken(refreshTokenAntigo);
@@ -102,7 +102,7 @@ public class AuthController : ControllerBase
             };
             Response.Cookies.Append("refreshToken", novoRefreshToken, refreshCookieOptions);
 
-            return Ok(new { Mensagem = "Tokens renovados com sucesso sem o usuário perceber!" });
+            return Ok(new { Mensagem = "Tokens renovados com sucesso!" });
         }
         catch (Exception ex)
         {
@@ -130,7 +130,7 @@ public class AuthController : ControllerBase
         Response.Cookies.Delete("jwt");
         Response.Cookies.Delete("refreshToken");
         
-        return Ok(new { Mensagem = "Você saiu do sistema e os cofres foram destruídos!" });
+        return Ok(new { Mensagem = "Você saiu do sistema!" });
     }
 
     [HttpPost("promover/{email}")]

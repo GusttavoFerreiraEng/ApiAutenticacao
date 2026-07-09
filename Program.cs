@@ -53,14 +53,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
 
         OnTokenValidated = context =>
         {
-            // Pede o banco de dados emprestado para o C#
-            var dbContext = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
             
-            // Pega o token atual (seja do Cookie ou do Cabeçalho do Swagger)
+            var dbContext = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+        
             var tokenAtual = context.Request.Cookies["jwt"] ?? 
                              context.Request.Headers.Authorization.ToString().Replace("Bearer ", "");
 
-            // Checa se o token está na tabela de banidos
+            
             var taNaListaNegra = dbContext.InvalidatedTokens.Any(t => t.Token == tokenAtual);
             
             if (taNaListaNegra)
@@ -86,7 +85,7 @@ builder.Services.AddSwaggerGen(opcoes =>
         Scheme = "Bearer"
     });
 
-    // Avisa o Swagger para mandar o token em todas as rotas que tem cadeado
+
     opcoes.AddSecurityRequirement(new OpenApiSecurityRequirement()
     {
         {
@@ -108,7 +107,7 @@ builder.Services.AddSwaggerGen(opcoes =>
 
 builder.Services.AddRateLimiter(options =>
 {
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests; // Erro 429: Calma aí, amigão!
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests; // Erro 429
     
     options.AddFixedWindowLimiter(policyName: "LoginRateLimit", config =>
     {

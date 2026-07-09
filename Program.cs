@@ -6,6 +6,8 @@ using Microsoft.IdentityModel.Tokens;
 using ApiAutenticacao.Services;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
+using FluentValidation; 
+using ApiAutenticacao.Validations;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,6 +20,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite("Data Source=banco.db"));
 
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddValidatorsFromAssemblyContaining<RegisterDTOValidator>();
 
 // builder.Services.AddOpenApi();
 
@@ -87,7 +90,7 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests; // Erro 429: Calma aí, amigão!
     
-    options.AddFixedWindowLimiter(policyName: "ratelimitingviado", config =>
+    options.AddFixedWindowLimiter(policyName: "LoginRateLimit", config =>
     {
         config.PermitLimit = 5; // Limite de 5 requisições.
         config.Window = TimeSpan.FromSeconds(30); // ...a cada 30 segundos

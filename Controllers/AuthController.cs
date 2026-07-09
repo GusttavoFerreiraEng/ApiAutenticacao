@@ -2,28 +2,36 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ApiAutenticacao.Services;
-using Models;
 using Microsoft.AspNetCore.RateLimiting;
+using FluentValidation;
 
 [ApiController]
-[EnableRateLimiting("ratelimitingviado")]
+[EnableRateLimiting("LoginRateLimit")]
 [Route("api/[controller]")]
 public class AuthController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly AuthService _authService; 
+    private readonly IValidator<RegisterDTO> _registerValidator;
 
     // Agora o Controller pede o Serviço de Autenticação
-    public AuthController(AuthService authService, AppDbContext context)
+    public AuthController(AuthService authService, AppDbContext context, IValidator<RegisterDTO> registerValidator)
     {
         _authService = authService;
         _context = context;
+        _registerValidator = registerValidator;
     }
 
 
 [HttpPost("register")]
     public IActionResult Register([FromBody] RegisterDTO registerDto)
     {
+        var validationResult = _registerValidator.Validate(registerDto);
+        if (!validationResult.IsValid)
+        {
+            return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
+        }
+
         try
         {
             _authService.Registrar(registerDto); 

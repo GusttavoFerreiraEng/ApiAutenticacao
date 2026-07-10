@@ -1,4 +1,3 @@
-Aqui tens o ficheiro `README.md` completo e unificado num único bloco de código, pronto a copiar e colar diretamente para o teu repositório:
 
 ```markdown
 # 🛡️ API de Autenticação Enterprise (.NET 10)

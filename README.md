@@ -1,4 +1,3 @@
-
 ```markdown
 # 🛡️ API de Autenticação Enterprise (.NET 10)
 

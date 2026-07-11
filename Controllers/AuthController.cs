@@ -134,7 +134,8 @@ public class AuthController : ControllerBase
         
         return Ok(new { Mensagem = "Você saiu do sistema!" });
     }
-
+    
+    [Authorize(Roles = "Admin")]
     [HttpPost("promover/{email}")]
     public IActionResult Promover(string email)
     {

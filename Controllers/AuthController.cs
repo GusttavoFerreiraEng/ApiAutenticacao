@@ -14,12 +14,14 @@ public class AuthController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly AuthService _authService; 
+    private readonly string __jwtKey;
     private readonly IValidator<RegisterDTO> _registerValidator;
 
-    public AuthController(AuthService authService, AppDbContext context, IValidator<RegisterDTO> registerValidator)
+    public AuthController(AuthService authService, IConfiguration configuration, AppDbContext context, IValidator<RegisterDTO> registerValidator)
     {
         _authService = authService;
         _context = context;
+        __jwtKey = configuration["jwt:Key"] ?? throw new InvalidOperationException("A chave JWT não foi encontrada no arquivo de configuração.");
         _registerValidator = registerValidator;
     }
 

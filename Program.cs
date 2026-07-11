@@ -24,7 +24,8 @@ builder.Services.AddValidatorsFromAssemblyContaining<RegisterDTOValidator>();
 
 // builder.Services.AddOpenApi();
 
-var chve = "MinhaSuperChaveSecretaDoEstagiario123";
+var chve = builder.Configuration["jwt:Key"]
+           ?? throw new InvalidOperationException("A chave JWT não foi encontrada no arquivo de configuração.");
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {

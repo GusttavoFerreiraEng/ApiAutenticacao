@@ -13,9 +13,12 @@ namespace ApiAutenticacao.Services
     {
         private readonly AppDbContext _context;
 
-        public AuthService(AppDbContext context)
+        private readonly string __jwtKey;
+
+        public AuthService(AppDbContext context, IConfiguration configuration)
         {
             _context = context;
+            __jwtKey = configuration["jwt:Key"] ?? throw new InvalidOperationException("A chave JWT não foi encontrada no arquivo de configuração.");
         }
 
         public void Registrar(RegisterDTO registerDto)
@@ -86,8 +89,7 @@ namespace ApiAutenticacao.Services
 
         private string GerarJwt(User user)
         {
-            var chaveTexto = "MinhaSuperChaveSecretaDoEstagiario123"; 
-            var chaveBytes = Encoding.UTF8.GetBytes(chaveTexto);
+            var chaveBytes = Encoding.UTF8.GetBytes(__jwtKey);
             var chaveCriptografica = new SymmetricSecurityKey(chaveBytes);
             var credenciais = new SigningCredentials(chaveCriptografica, SecurityAlgorithms.HmacSha256);
 

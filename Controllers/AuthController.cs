@@ -16,13 +16,15 @@ public class AuthController : ControllerBase
     private readonly AuthService _authService; 
     private readonly string __jwtKey;
     private readonly IValidator<RegisterDTO> _registerValidator;
+    private readonly IValidator<LoginDTO> _loginValidator;
 
-    public AuthController(AuthService authService, IConfiguration configuration, AppDbContext context, IValidator<RegisterDTO> registerValidator)
+    public AuthController(AuthService authService, IConfiguration configuration, AppDbContext context, IValidator<RegisterDTO> registerValidator, IValidator<LoginDTO> loginValidator)
     {
         _authService = authService;
         _context = context;
         __jwtKey = configuration["jwt:Key"] ?? throw new InvalidOperationException("A chave JWT não foi encontrada no arquivo de configuração.");
         _registerValidator = registerValidator;
+        _loginValidator = loginValidator;
     }
 
     [HttpPost("register")]
@@ -48,6 +50,13 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public IActionResult Login([FromBody] LoginDTO loginDto)
     {
+
+        var validationResult = _loginValidator.Validate(loginDto);
+        if (!validationResult.IsValid)
+        {
+            return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
+        }
+        
         try
         {
             var (jwt, refreshToken) = _authService.Login(loginDto); 

@@ -52,7 +52,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
             return Task.CompletedTask;
         },
 
-        OnTokenValidated = context =>
+        OnTokenValidated = async context =>
         {
             
             var dbContext = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
@@ -61,14 +61,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
                              context.Request.Headers.Authorization.ToString().Replace("Bearer ", "");
 
             
-            var taNaListaNegra = dbContext.InvalidatedTokens.Any(t => t.Token == tokenAtual);
+            var taNaListaNegra = await dbContext.InvalidatedTokens.AnyAsync(t => t.Token == tokenAtual);
             
             if (taNaListaNegra)
             {
-                context.Fail("Este token foi revogado pelo usuário (Lista Negra). Acesso Negado!");
+                context.Fail("Este token foi revogado(Lista Negra). Acesso Negado!");
             }
 
-            return Task.CompletedTask;
         }
     };
 });

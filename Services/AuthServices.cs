@@ -50,7 +50,7 @@ namespace ApiAutenticacao.Services
             var refreshToken = GerarRefreshToken();
 
             user.RefreshToken = refreshToken;
-            user.RefreshTokenExpiryTime = DateTime.Now.AddDays(7); 
+            user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7); 
             _context.SaveChanges();
 
             return (jwt, refreshToken); 
@@ -60,7 +60,7 @@ namespace ApiAutenticacao.Services
         {
             var user = _context.Users.FirstOrDefault(u => u.RefreshToken == refreshTokenAntigo);
             
-            if (user == null || user.RefreshTokenExpiryTime <= DateTime.Now)
+            if (user == null || user.RefreshTokenExpiryTime <= DateTime.UtcNow)
             {
                 throw new Exception("Chave inválida ou expirada. Faça login novamente.");
             }
@@ -69,7 +69,7 @@ namespace ApiAutenticacao.Services
             var novoRefreshToken = GerarRefreshToken();
 
             user.RefreshToken = novoRefreshToken;
-            user.RefreshTokenExpiryTime = DateTime.Now.AddDays(7);
+            user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
             _context.SaveChanges();
 
             return (novoJwt, novoRefreshToken);
@@ -101,7 +101,7 @@ namespace ApiAutenticacao.Services
 
             var tokenObjeto = new JwtSecurityToken(
                 claims: informacoes, 
-                expires: DateTime.Now.AddMinutes(15), 
+                expires: DateTime.UtcNow.AddMinutes(15), 
                 signingCredentials: credenciais
             );
 

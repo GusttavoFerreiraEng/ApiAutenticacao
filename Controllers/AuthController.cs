@@ -57,7 +57,7 @@ public class AuthController : ControllerBase
                 HttpOnly = true, 
                 Secure = true,  
                 SameSite = SameSiteMode.Strict, 
-                Expires = DateTime.Now.AddMinutes(15) 
+                Expires = DateTime.UtcNow.AddMinutes(15) 
             };
             Response.Cookies.Append("jwt", jwt, jwtCookieOptions);
 
@@ -66,7 +66,7 @@ public class AuthController : ControllerBase
                 HttpOnly = true, 
                 Secure = true,  
                 SameSite = SameSiteMode.Strict, 
-                Expires = DateTime.Now.AddDays(7) 
+                Expires = DateTime.UtcNow.AddDays(7) 
             };
             Response.Cookies.Append("refreshToken", refreshToken, refreshCookieOptions);
 
@@ -94,13 +94,13 @@ public class AuthController : ControllerBase
 
             var jwtCookieOptions = new CookieOptions
             {
-                HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.Now.AddMinutes(15)
+                HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.UtcNow.AddMinutes(15)
             };
             Response.Cookies.Append("jwt", novoJwt, jwtCookieOptions);
 
             var refreshCookieOptions = new CookieOptions
             {
-                HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.Now.AddDays(7)
+                HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.UtcNow.AddDays(7)
             };
             Response.Cookies.Append("refreshToken", novoRefreshToken, refreshCookieOptions);
 
@@ -122,7 +122,7 @@ public class AuthController : ControllerBase
             var tokenRevogado = new InvalidatedToken
             {
                 Token = tokenNoCofre,
-                ExpirationDate = DateTime.Now.AddMinutes(15) // Agora expira em 15 min junto com o token
+                ExpirationDate = DateTime.UtcNow.AddMinutes(15) // Agora expira em 15 min junto com o token
             };
 
             _context.InvalidatedTokens.Add(tokenRevogado);

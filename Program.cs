@@ -1,151 +1,150 @@
-using Microsoft.EntityFrameworkCore;
 using System.Text;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.OpenApi.Models;
 using Microsoft.IdentityModel.Tokens;
-using ApiAutenticacao.Services;
+using Microsoft.OpenApi.Models;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
 using FluentValidation; 
+using ApiAutenticacao.Services;
 using ApiAutenticacao.Validations;
+using Models;
+using ApiAutenticacao.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
+// 1. Configurações base
 builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+builder.Services.AddEndpointsApiExplorer();
 
+// 2. Health Checks (Essencial para produção)
+builder.Services.AddHealthChecks()
+    .AddCheck("database", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
+
+// 3. Banco de Dados (Alerta: SQLite não suporta bem concorrência no Auth, planeje a migração para PostgreSQL)
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite("Data Source=banco.db"));
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=banco.db"));
 
-builder.Services.AddScoped<AuthService>();
+// 4. Injeção de Dependências (Atualizado para Interface)
+builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddValidatorsFromAssemblyContaining<RegisterDTOValidator>();
 
-// builder.Services.AddOpenApi();
-
-var chve = builder.Configuration["jwt:Key"]
-           ?? throw new InvalidOperationException("A chave JWT não foi encontrada no arquivo de configuração.");
-
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
+// 5. CORS Policy (Essencial para BFF/Cookies)
+var frontEndUrl = builder.Configuration["FrontendUrl"] ?? "http://localhost:3000";
+builder.Services.AddCors(options =>
 {
-    options.TokenValidationParameters = new TokenValidationParameters
+    options.AddPolicy("CorsPolicy", policy =>
     {
-        ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(chve)),
-        ValidateIssuer = false,
-        ValidateAudience = false
-    };
-
-    options.Events = new JwtBearerEvents
-    {
-        OnMessageReceived = context =>
-        {
-            // Procura o (cookie) chamado "jwt"
-            var tokenNoCofre = context.Request.Cookies["jwt"];
-            
-            // Se achou, entrega pro segurança avaliar
-            if (!string.IsNullOrEmpty(tokenNoCofre))
-            {
-                context.Token = tokenNoCofre;
-            }
-            return Task.CompletedTask;
-        },
-
-        OnTokenValidated = async context =>
-        {
-            
-            var dbContext = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
-        
-            var tokenAtual = context.Request.Cookies["jwt"] ?? 
-                             context.Request.Headers.Authorization.ToString().Replace("Bearer ", "");
-
-            
-            var taNaListaNegra = await dbContext.InvalidatedTokens.AnyAsync(t => t.Token == tokenAtual);
-            
-            if (taNaListaNegra)
-            {
-                context.Fail("Este token foi revogado(Lista Negra). Acesso Negado!");
-            }
-
-        }
-    };
+        policy.WithOrigins(frontEndUrl) // URL do seu FrontEnd (React/Angular)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials(); // Permite envio de Cookies cross-origin
+    });
 });
 
-builder.Services.AddEndpointsApiExplorer();
+// 6. JWT e Autenticação
+var jwtKey = builder.Configuration["jwt:Key"] 
+    ?? throw new InvalidOperationException("Chave secreta JWT não configurada.");
+var jwtIssuer = builder.Configuration["jwt:Issuer"];
+var jwtAudience = builder.Configuration["jwt:Audience"];
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            
+            // Segurança: Validando Emissor e Audiência
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+            
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero // Remove o tempo extra de carência (default 5min) para o token expirar na hora exata
+        };
+
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                // Estratégia híbrida: Lê do Cookie (FrontEnd) ou Header (Swagger/Postman)
+                var tokenFromCookie = context.Request.Cookies["jwt"];
+                if (!string.IsNullOrEmpty(tokenFromCookie))
+                {
+                    context.Token = tokenFromCookie;
+                }
+                return Task.CompletedTask;
+            }
+            // REMOVIDO: OnTokenValidated que consultava o banco. JWT agora é 100% Stateless.
+        };
+    });
+
+// 7. Swagger Protegido
 builder.Services.AddSwaggerGen(opcoes =>
 {
-
+    opcoes.SwaggerDoc("v1", new OpenApiInfo { Title = "API Autenticacao", Version = "v1" });
     opcoes.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "Insira o token JWT desta maneira: Bearer {seu_token}",
+        Description = "Insira o JWT desta maneira: Bearer {seu_token}",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
         Scheme = "Bearer"
     });
-
-
-    opcoes.AddSecurityRequirement(new OpenApiSecurityRequirement()
+    opcoes.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
             new OpenApiSecurityScheme
             {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                },
-                Scheme = "oauth2",
-                Name = "Bearer",
-                In = ParameterLocation.Header,
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
             },
-            new List<string>()
+            Array.Empty<string>()
         }
     });
 });
 
+// 8. Rate Limiting (Proteção contra Brute Force)
 builder.Services.AddRateLimiter(options =>
 {
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests; // Erro 429
-    
-    options.AddFixedWindowLimiter(policyName: "LoginRateLimit", config =>
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("LoginRateLimit", config =>
     {
-        config.PermitLimit = 5; // Limite de 5 requisições.
-        config.Window = TimeSpan.FromSeconds(30); // ...a cada 30 segundos
+        config.PermitLimit = 5; 
+        config.Window = TimeSpan.FromSeconds(30); 
         config.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-        config.QueueLimit = 0; // Não cria fila de espera, só bloqueia na hora
+        config.QueueLimit = 0; 
     });
 });
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// == Pipeline de Middlewares ==
+
+app.UseExceptionHandler("/error"); // Tratamento global genérico no .NET (ou crie um controller /error)
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+else
+{
+    app.UseHsts(); // Segurança de Produção: Força navegação em HTTPS (OWASP)
+}
 
 app.UseHttpsRedirection();
-app.UseRateLimiter();
 
-app.UseAuthentication();
-app.UseAuthorization();
+// Importante: A ordem dos middlewares é vital
+app.UseCors("CorsPolicy"); 
+app.UseRateLimiter(); 
 
+app.UseAuthentication(); // 1. Quem é você?
+app.UseAuthorization();  // 2. Você tem permissão?
+
+app.MapHealthChecks("/health"); // Endpoint de saúde /health
 app.MapControllers();
 
 app.Run();
-
-// public class AppDbContextFactory : IDbContextFactory<AppDbContext>
-// {
-//     public AppDbContext CreateDbContext()
-//     {
-//         var optionsBuilder = new DbContextOptionsBuilder<AppDbContext>();
-//         optionsBuilder.UseSqlite("Data Source=banco.db");
-//         return new AppDbContext(optionsBuilder.Options);
-//     }
-
-// }
-
-

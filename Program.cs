@@ -6,7 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using ApiAutenticacao.Services;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
-using FluentValidation; 
+using FluentValidation;
 using ApiAutenticacao.Validations;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -43,7 +43,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
         {
             // Procura o (cookie) chamado "jwt"
             var tokenNoCofre = context.Request.Cookies["jwt"];
-            
+
             // Se achou, entrega pro segurança avaliar
             if (!string.IsNullOrEmpty(tokenNoCofre))
             {
@@ -54,15 +54,15 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
 
         OnTokenValidated = async context =>
         {
-            
+
             var dbContext = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
-        
-            var tokenAtual = context.Request.Cookies["jwt"] ?? 
+
+            var tokenAtual = context.Request.Cookies["jwt"] ??
                              context.Request.Headers.Authorization.ToString().Replace("Bearer ", "");
 
-            
+
             var taNaListaNegra = await dbContext.InvalidatedTokens.AnyAsync(t => t.Token == tokenAtual);
-            
+
             if (taNaListaNegra)
             {
                 context.Fail("Este token foi revogado(Lista Negra). Acesso Negado!");
@@ -108,13 +108,19 @@ builder.Services.AddSwaggerGen(opcoes =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests; // Erro 429
-    
-    options.AddFixedWindowLimiter(policyName: "LoginRateLimit", config =>
+
+    options.AddPolicy("LoginRateLimit", httpContext =>
     {
-        config.PermitLimit = 5; // Limite de 5 requisições.
-        config.Window = TimeSpan.FromSeconds(30); // ...a cada 30 segundos
-        config.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-        config.QueueLimit = 0; // Não cria fila de espera, só bloqueia na hora
+        var remoteIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            remoteIp,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5, // Limite de 5 requisições por IP
+                Window = TimeSpan.FromSeconds(30), // ...a cada 30 segundos
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0 // Não cria fila de espera, só bloqueia na hora
+            });
     });
 });
 

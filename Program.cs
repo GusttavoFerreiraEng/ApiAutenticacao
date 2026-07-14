@@ -13,36 +13,34 @@ using ApiAutenticacao.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Configurações base
+// Configura os serviços principais da aplicação: controllers, health checks, persistência, validação e CORS.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
-// 2. Health Checks (Essencial para produção)
+// Health checks básicos para monitorar a aplicação em produção.
 builder.Services.AddHealthChecks()
     .AddCheck("database", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
 
-// 3. Banco de Dados (Alerta: SQLite não suporta bem concorrência no Auth, planeje a migração para PostgreSQL)
+// SQLite é usado em ambiente de desenvolvimento; em produção, prefira um SGBD com melhor suporte a concorrência.
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=banco.db"));
 
-// 4. Injeção de Dependências (Atualizado para Interface)
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddValidatorsFromAssemblyContaining<RegisterDTOValidator>();
 
-// 5. CORS Policy (Essencial para BFF/Cookies)
 var frontEndUrl = builder.Configuration["FrontendUrl"] ?? "http://localhost:3000";
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("CorsPolicy", policy =>
     {
-        policy.WithOrigins(frontEndUrl) // URL do seu FrontEnd (React/Angular)
+        policy.WithOrigins(frontEndUrl)
               .AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials(); // Permite envio de Cookies cross-origin
+              .AllowCredentials();
     });
 });
 
-// 6. JWT e Autenticação
+// Configuração de JWT Bearer: valida o token, emissor, audiência e tempo de expiração.
 var jwtKey = builder.Configuration["jwt:Key"] 
     ?? throw new InvalidOperationException("Chave secreta JWT não configurada.");
 var jwtIssuer = builder.Configuration["jwt:Issuer"];
@@ -55,22 +53,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            
-            // Segurança: Validando Emissor e Audiência
             ValidateIssuer = true,
             ValidIssuer = jwtIssuer,
             ValidateAudience = true,
             ValidAudience = jwtAudience,
-            
             ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero // Remove o tempo extra de carência (default 5min) para o token expirar na hora exata
+            ClockSkew = TimeSpan.Zero // Expiração precisa do token sem margem extra.
         };
 
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
             {
-                // Estratégia híbrida: Lê do Cookie (FrontEnd) ou Header (Swagger/Postman)
+                // Aceita o JWT via cookie para chamadas do front-end ou via header para Swagger/Postman.
                 var tokenFromCookie = context.Request.Cookies["jwt"];
                 if (!string.IsNullOrEmpty(tokenFromCookie))
                 {
@@ -78,11 +73,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 }
                 return Task.CompletedTask;
             }
-            // REMOVIDO: OnTokenValidated que consultava o banco. JWT agora é 100% Stateless.
         };
     });
 
-// 7. Swagger Protegido
 builder.Services.AddSwaggerGen(opcoes =>
 {
     opcoes.SwaggerDoc("v1", new OpenApiInfo { Title = "API Autenticacao", Version = "v1" });
@@ -106,16 +99,16 @@ builder.Services.AddSwaggerGen(opcoes =>
     });
 });
 
-// 8. Rate Limiting (Proteção contra Brute Force)
+// Limita tentativas de login para reduzir a superfície de ataques por força bruta.
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddFixedWindowLimiter("LoginRateLimit", config =>
     {
-        config.PermitLimit = 5; 
-        config.Window = TimeSpan.FromSeconds(30); 
+        config.PermitLimit = 5;
+        config.Window = TimeSpan.FromSeconds(30);
         config.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-        config.QueueLimit = 0; 
+        config.QueueLimit = 0;
     });
 });
 
@@ -141,10 +134,10 @@ app.UseHttpsRedirection();
 app.UseCors("CorsPolicy"); 
 app.UseRateLimiter(); 
 
-app.UseAuthentication(); // 1. Quem é você?
-app.UseAuthorization();  // 2. Você tem permissão?
+app.UseAuthentication(); 
+app.UseAuthorization();  
 
-app.MapHealthChecks("/health"); // Endpoint de saúde /health
+app.MapHealthChecks("/health"); 
 app.MapControllers();
 
 app.Run();

@@ -28,13 +28,12 @@ namespace ApiAutenticacao.Services
             var existingUser = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == registerDto.Email);
             if (existingUser != null)
             {
-                throw new InvalidOperationException("Email já cadastrado."); // Ideal é uma DomainException
+                throw new InvalidOperationException("Email já cadastrado."); 
             }
 
             var user = new User
             {
                 Email = registerDto.Email,
-                // WorkFactor (custo) 11: padrão atual recomendado de segurança e performance
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password, workFactor: 11)
             };
             
@@ -133,8 +132,8 @@ namespace ApiAutenticacao.Services
             };
 
             var tokenObjeto = new JwtSecurityToken(
-                issuer: _configuration["jwt:Issuer"],   // Ex: "MinhaEmpresa.ApiAutenticacao"
-                audience: _configuration["jwt:Audience"], // Ex: "MinhaEmpresa.Frontend"
+                issuer: _configuration["jwt:Issuer"],   // "MinhaEmpresa.ApiAutenticacao"
+                audience: _configuration["jwt:Audience"], // "MinhaEmpresa.Frontend"
                 claims: informacoes, 
                 expires: DateTime.UtcNow.AddMinutes(15), 
                 signingCredentials: credenciais

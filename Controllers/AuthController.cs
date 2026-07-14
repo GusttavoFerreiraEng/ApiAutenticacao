@@ -13,11 +13,10 @@ namespace ApiAutenticacao.Controllers
     [Route("api/[controller]")]
     public class AuthController : ControllerBase
     {
-        // 1. Removido o AppDbContext e a __jwtKey. Dependemos apenas do Service (Abstração).
-        private readonly IAuthService _authService; 
+        private readonly IAuthService _authService;
         private readonly IValidator<RegisterDTO> _registerValidator;
         private readonly IValidator<LoginDTO> _loginValidator;
-        private readonly ILogger<AuthController> _logger; // Adicionado para observabilidade
+        private readonly ILogger<AuthController> _logger;
 
         public AuthController(
             IAuthService authService, 
@@ -32,9 +31,9 @@ namespace ApiAutenticacao.Controllers
         }
 
         [HttpPost("register")]
-        public async Task<IActionResult> Register([FromBody] RegisterDTO registerDto) // async Task
+        public async Task<IActionResult> Register([FromBody] RegisterDTO registerDto)
         {
-            var validationResult = await _registerValidator.ValidateAsync(registerDto); // Validação assíncrona
+            var validationResult = await _registerValidator.ValidateAsync(registerDto);
             if (!validationResult.IsValid)
             {
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
@@ -64,15 +63,12 @@ namespace ApiAutenticacao.Controllers
             
             try
             {
-                var (jwt, refreshToken) = await _authService.LoginAsync(loginDto); 
-                
-                SetTokenCookies(jwt, refreshToken); // Extraído para manter código limpo (DRY)
-
+                var (jwt, refreshToken) = await _authService.LoginAsync(loginDto);
+                SetTokenCookies(jwt, refreshToken);
                 return Ok(new { Mensagem = "Login realizado!" });
             }
-            catch (UnauthorizedAccessException) // Criar exceções customizadas no domínio é ideal
+            catch (UnauthorizedAccessException)
             {
-                // Erro genérico para evitar User Enumeration
                 return Unauthorized(new { Erro = "E-mail ou senha incorretos." });
             }
             catch (Exception ex)

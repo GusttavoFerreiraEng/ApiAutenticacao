@@ -16,19 +16,19 @@ namespace ApiAutenticacao.Data
         {
             base.OnModelCreating(modelBuilder);
 
-            // Fluent API: Configurações de Produção para o Banco de Dados
+            // Configurações de Produção para o Banco de Dados
 
             modelBuilder.Entity<User>(entity =>
             {
                 entity.HasKey(e => e.Id);
 
-                // 1. Otimização de Busca e Segurança
+   
                 entity.HasIndex(e => e.Email).IsUnique(); 
                 entity.Property(e => e.Email)
                       .IsRequired()
                       .HasMaxLength(256); // RFC 5321 (Tamanho max de emails)
 
-                // 2. Otimização de Armazenamento
+      
                 // BCrypt hash geralmente tem tamanho fixo ao redor de 60 caracteres
                 entity.Property(e => e.PasswordHash)
                       .IsRequired()

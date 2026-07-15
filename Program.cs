@@ -11,6 +11,8 @@ using ApiAutenticacao.Validations;
 using Models;
 using ApiAutenticacao.Data;
 using ApiAutenticacao.Middlewares;
+using ApiAutenticacao.Interfaces;
+using ApiAutenticacao.Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,6 +26,8 @@ builder.Services.AddHealthChecks()
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
+
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 // SQLite é usado em ambiente de desenvolvimento; em produção, prefira um SGBD com melhor suporte a concorrência.
 builder.Services.AddDbContext<AppDbContext>(options =>

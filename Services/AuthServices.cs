@@ -6,6 +6,8 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.EntityFrameworkCore;
 using Models;
 using ApiAutenticacao.Data;
+using ApiAutenticacao.common;
+using ApiAutenticacao.DTOs;
 
 namespace ApiAutenticacao.Services
 {
@@ -22,13 +24,13 @@ namespace ApiAutenticacao.Services
             _jwtKey = configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
         }
 
-        public async Task RegistrarAsync(RegisterDTO registerDto)
+        public async Task<Result> RegistrarAsync(RegisterDTO registerDto)
         {
             // Assíncrono para liberar thread
             var existingUser = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == registerDto.Email);
             if (existingUser != null)
             {
-                throw new InvalidOperationException("Email já cadastrado."); 
+                return Result.Failure(AuthErrors.EmailAlreadyExists);
             }
 
             var user = new User
@@ -36,40 +38,41 @@ namespace ApiAutenticacao.Services
                 Email = registerDto.Email,
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password, workFactor: 11)
             };
-            
+
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
+
+            return Result.Success();
         }
 
-        public async Task<(string AccessToken, string RefreshToken)> LoginAsync(LoginDTO loginDto)
+        public async Task<Result<(string AccessToken, string RefreshToken)>> LoginAsync(LoginDTO loginDto)
         {
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == loginDto.Email);
-            
+
             if (user == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
             {
-                // Uma exceção de autorização genérica capturada no controller
-                throw new UnauthorizedAccessException("Credenciais inválidas."); 
+                return Result<(string, string)>.Failure(AuthErrors.InvalidCredentials);
             }
 
             var jwt = GerarJwt(user);
             var refreshToken = GerarRefreshToken();
 
-            user.RefreshTokenHash = ComputeSha256Hash(refreshToken); // Usando hash simples em vez de HMAC
-            user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7); // Prox passo: levar para IOptions
-            
+            user.RefreshTokenHash = ComputeSha256Hash(refreshToken);
+            user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
+
             await _context.SaveChangesAsync();
 
-            return (jwt, refreshToken);
+            return Result<(string, string)>.Success((jwt, refreshToken));
         }
 
-        public async Task<(string AccessToken, string RefreshToken)> RenovarTokenAsync(string refreshTokenAntigo)
-        {   
+        public async Task<Result<(string AccessToken, string RefreshToken)>> RenovarTokenAsync(string refreshTokenAntigo)
+        {
             var providedHash = ComputeSha256Hash(refreshTokenAntigo);
             var user = await _context.Users.FirstOrDefaultAsync(u => u.RefreshTokenHash == providedHash);
-            
+
             if (user == null || user.RefreshTokenExpiryTime <= DateTime.UtcNow)
             {
-                throw new UnauthorizedAccessException("Refresh token inválido ou expirado.");
+                return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
             }
 
             var novoJwt = GerarJwt(user);
@@ -78,37 +81,40 @@ namespace ApiAutenticacao.Services
             // Rotação de Refresh Token
             user.RefreshTokenHash = ComputeSha256Hash(novoRefreshToken);
             user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
-            
+
             await _context.SaveChangesAsync();
 
-            return (novoJwt, novoRefreshToken);
+            return Result<(string, string)>.Success((novoJwt, novoRefreshToken));
         }
 
-        public async Task PromoverParaAdminAsync(string email)
+        public async Task<Result> PromoverParaAdminAsync(string email)
         {
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
             if (user == null)
             {
-                throw new KeyNotFoundException("Usuário não encontrado.");
+                return Result.Failure(AuthErrors.UserNotFound);
             }
 
-            user.Role = "Admin"; 
+            user.Role = "Admin";
             await _context.SaveChangesAsync();
+            return Result.Success();
         }
 
-        public async Task<object?> ObterPerfilAsync(string email)
+        public async Task<Result<UserProfileResponseDTO?>> ObterPerfilAsync(string email)
         {
             var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email);
-            if (user == null) return null;
+            if (user == null) return Result<UserProfileResponseDTO?>.Failure(AuthErrors.UserNotFound);
 
-            return new { SeuId = user.Id, SeuEmail = user.Email }; // Futuramente: retornar um UserResponseDTO
+            var perfilDto = new UserProfileResponseDTO(user.Id, user.Email, user.Role);
+
+            return Result<UserProfileResponseDTO?>.Success(perfilDto);
         }
 
         public async Task InvalidarRefreshTokenAsync(string refreshToken)
         {
             var hash = ComputeSha256Hash(refreshToken);
             var user = await _context.Users.FirstOrDefaultAsync(u => u.RefreshTokenHash == hash);
-            
+
             if (user != null)
             {
                 user.RefreshTokenHash = null; // Revogação no banco
@@ -118,24 +124,24 @@ namespace ApiAutenticacao.Services
         }
 
         private string GerarJwt(User user)
-        {   
+        {
             var chaveBytes = Encoding.UTF8.GetBytes(_jwtKey);
             var credenciais = new SigningCredentials(new SymmetricSecurityKey(chaveBytes), SecurityAlgorithms.HmacSha256);
 
             // Adicionando claims vitais para a RFC do JWT
-            var informacoes = new[] 
-            { 
+            var informacoes = new[]
+            {
               new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()), // JWT ID para possível revogação
               new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),        // Subject (Dono do token)
               new Claim(ClaimTypes.Email, user.Email),
-              new Claim(ClaimTypes.Role, user.Role)     
+              new Claim(ClaimTypes.Role, user.Role)
             };
 
             var tokenObjeto = new JwtSecurityToken(
                 issuer: _configuration["jwt:Issuer"],   // "MinhaEmpresa.ApiAutenticacao"
                 audience: _configuration["jwt:Audience"], // "MinhaEmpresa.Frontend"
-                claims: informacoes, 
-                expires: DateTime.UtcNow.AddMinutes(15), 
+                claims: informacoes,
+                expires: DateTime.UtcNow.AddMinutes(15),
                 signingCredentials: credenciais
             );
 
@@ -156,6 +162,36 @@ namespace ApiAutenticacao.Services
             using var sha256Hash = SHA256.Create();
             byte[] bytes = sha256Hash.ComputeHash(Encoding.UTF8.GetBytes(rawData));
             return Convert.ToBase64String(bytes);
+        }
+
+        Task<Result> IAuthService.RegistrarAsync(RegisterDTO registerDto)
+        {
+            throw new NotImplementedException();
+        }
+
+        Task<Result<(string AccessToken, string RefreshToken)>> IAuthService.LoginAsync(LoginDTO loginDto)
+        {
+            throw new NotImplementedException();
+        }
+
+        Task<Result<(string AccessToken, string RefreshToken)>> IAuthService.RenovarTokenAsync(string refreshTokenAntigo)
+        {
+            throw new NotImplementedException();
+        }
+
+        Task<Result> IAuthService.PromoverParaAdminAsync(string email)
+        {
+            throw new NotImplementedException();
+        }
+
+        Task<Result<UserProfileResponseDTO?>> IAuthService.ObterPerfilAsync(string email)
+        {
+            throw new NotImplementedException();
+        }
+
+        Task<Result> IAuthService.InvalidarRefreshTokenAsync(string refreshToken)
+        {
+            throw new NotImplementedException();
         }
     }
 }

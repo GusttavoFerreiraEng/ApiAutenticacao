@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using Models;
 using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.common;
+using ApiAutenticacao.Common;
 
 namespace ApiAutenticacao.Services
 {
@@ -56,7 +57,6 @@ namespace ApiAutenticacao.Services
 
             user.RefreshTokenHash = ComputeSha256Hash(refreshToken);
             
-            // CORREÇÃO: Usando DateTimeOffset
             user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
 
             await _uow.CommitAsync();
@@ -69,7 +69,6 @@ namespace ApiAutenticacao.Services
             var providedHash = ComputeSha256Hash(refreshTokenAntigo);
             var user = await _uow.Users.GetByRefreshTokenHashAsync(providedHash);
 
-            // CORREÇÃO: Comparando com DateTimeOffset
             if (user == null || user.RefreshTokenExpiryTime <= DateTimeOffset.UtcNow)
             {
                 return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
@@ -80,7 +79,6 @@ namespace ApiAutenticacao.Services
 
             user.RefreshTokenHash = ComputeSha256Hash(novoRefreshToken);
             
-            // CORREÇÃO: Usando DateTimeOffset
             user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
 
             await _uow.CommitAsync();
@@ -111,7 +109,6 @@ namespace ApiAutenticacao.Services
             return Result<UserProfileResponseDTO?>.Success(perfilDto);
         }
 
-        // CORREÇÃO: Assinatura atualizada para retornar Result
         public async Task<Result> InvalidarRefreshTokenAsync(string refreshToken)
         {
             var hash = ComputeSha256Hash(refreshToken);
@@ -124,7 +121,7 @@ namespace ApiAutenticacao.Services
                 await _uow.CommitAsync();
             }
 
-            return Result.Success(); // CORREÇÃO: Agora retorna sucesso
+            return Result.Success(); 
         }
 
         private string GerarJwt(User user)
@@ -166,34 +163,5 @@ namespace ApiAutenticacao.Services
             return Convert.ToBase64String(bytes);
         }
 
-        Task<Result> IAuthService.RegistrarAsync(RegisterDTO registerDto)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result<(string AccessToken, string RefreshToken)>> IAuthService.LoginAsync(LoginDTO loginDto)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result<(string AccessToken, string RefreshToken)>> IAuthService.RenovarTokenAsync(string refreshTokenAntigo)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result> IAuthService.PromoverParaAdminAsync(string email)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result<UserProfileResponseDTO?>> IAuthService.ObterPerfilAsync(string email)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result> IAuthService.InvalidarRefreshTokenAsync(string refreshToken)
-        {
-            throw new NotImplementedException();
-        }
     }
 }

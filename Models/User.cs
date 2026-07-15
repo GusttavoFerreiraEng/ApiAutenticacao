@@ -18,5 +18,8 @@ namespace Models
         
 
         public DateTimeOffset? RefreshTokenExpiryTime { get; set; } 
+
+        public int AccessFailedCount { get; set; } = 0;
+        public DateTimeOffset? LockoutEnd { get; set; }
     }
 }

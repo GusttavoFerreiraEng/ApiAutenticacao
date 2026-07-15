@@ -3,10 +3,10 @@ using Microsoft.AspNetCore.Authorization;
 using ApiAutenticacao.DTOs;
 using ApiAutenticacao.common;
 using Microsoft.AspNetCore.Mvc;
-using ApiAutenticacao.Services;
 using Microsoft.AspNetCore.RateLimiting;
 using FluentValidation;
 using Models;
+using ApiAutenticacao.Interfaces;
 
 namespace ApiAutenticacao.Controllers
 {
@@ -49,7 +49,6 @@ namespace ApiAutenticacao.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro no registro do email {Email}", registerDto.Email);
-                // Evitamos expor detalhes internos. Retornamos mensagem genérica.
                 return BadRequest(new { Erro = "Não foi possível concluir o cadastro. Verifique os dados e tente novamente." });
             }
         }
@@ -59,26 +58,29 @@ namespace ApiAutenticacao.Controllers
         {
             var validationResult = await _loginValidator.ValidateAsync(loginDto);
             if (!validationResult.IsValid)
-            {
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
-            }
 
             var result = await _authService.LoginAsync(loginDto);
 
-            if (result.ISFailure)
+            if (result.IsFailure)
             {
-                var (jwt, refreshToken) = result.Value;
-                SetTokenCookies(jwt, refreshToken);
+                if (result.Error == AuthErrors.AccountLocked)
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new MessageResponseDTO(result.Error.Description));
+                }
+                if (result.Error == AuthErrors.InvalidCredentials)
+                {
+                    return Unauthorized(new MessageResponseDTO(result.Error.Description));  
+                }
 
-                return Ok(new MessageResponseDTO("Login realizado com sucesso!"));
+                return BadRequest(new MessageResponseDTO(result.Error.Description));
             }
 
-            if (result.Error == AuthErrors.InvalidCredentials)
-            {
-                return Unauthorized(new { Erro = result.Error.Description });
-            }
+            var (jwt, refreshToken) = result.Value;
 
-            return BadRequest(new { Erro = result.Error.Description });
+            SetTokenCookies(jwt, refreshToken);
+
+            return Ok(new MessageResponseDTO("Login realizado com sucesso."));
         }
 
         [HttpPost("refresh")]
@@ -91,7 +93,7 @@ namespace ApiAutenticacao.Controllers
 
             var result = await _authService.RenovarTokenAsync(refreshTokenAntigo);
 
-            if (result.ISFailure)
+            if (result.IsFailure)
             {
                 _logger.LogWarning("Tentativa de refresh token falhou: {Erro}", result.Error.Description);
                 ClearTokenCookies(); // Regra de segurança mantida
@@ -125,7 +127,6 @@ namespace ApiAutenticacao.Controllers
         [HttpPost("promover/{email}")]
         public async Task<IActionResult> Promover(string email)
         {
-            // Ponto de melhoria: receber via [FromBody] e validar o e-mail, pois via URL pode vazar em logs de proxy/rede.
             try
             {
                 await _authService.PromoverParaAdminAsync(email);
@@ -147,11 +148,11 @@ namespace ApiAutenticacao.Controllers
 
             var result = await _authService.ObterPerfilAsync(emailUser);
 
-            if (result.ISFailure)
+            if (result.IsFailure)
             {
                 if (result.Error == AuthErrors.UserNotFound)
                 {
-                    ClearTokenCookies(); // Regra de segurança: se o user não existe mais no DB, limpa os cookies
+                    ClearTokenCookies();
                     return NotFound(new { Erro = result.Error.Description });
                 }
                 return BadRequest(new { Erro = result.Error.Description });
@@ -160,7 +161,6 @@ namespace ApiAutenticacao.Controllers
             return Ok(result.Value);
         }
 
-        // --- Helper Methods ---
         private void SetTokenCookies(string jwt, string refreshToken)
         {
             Response.Cookies.Append("jwt", jwt, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.UtcNow.AddMinutes(15) });

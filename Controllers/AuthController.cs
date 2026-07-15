@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using ApiAutenticacao.DTOs;
+using ApiAutenticacao.common;
 using Microsoft.AspNetCore.Mvc;
 using ApiAutenticacao.Services;
 using Microsoft.AspNetCore.RateLimiting;
@@ -61,46 +63,46 @@ namespace ApiAutenticacao.Controllers
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
             }
 
-            try
+            var result = await _authService.LoginAsync(loginDto);
+
+            if (result.ISFailure)
             {
-                var (jwt, refreshToken) = await _authService.LoginAsync(loginDto);
+                var (jwt, refreshToken) = result.Value;
                 SetTokenCookies(jwt, refreshToken);
-                return Ok(new { Mensagem = "Login realizado!" });
+
+                return Ok(new MessageResponseDTO("Login realizado com sucesso!"));
             }
-            catch (UnauthorizedAccessException)
+
+            if (result.Error == AuthErrors.InvalidCredentials)
             {
-                return Unauthorized(new { Erro = "E-mail ou senha incorretos." });
+                return Unauthorized(new { Erro = result.Error.Description });
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Erro inesperado no login do e-mail {Email}", loginDto.Email);
-                return StatusCode(500, new { Erro = "Ocorreu um erro interno." });
-            }
+
+            return BadRequest(new { Erro = result.Error.Description });
         }
 
         [HttpPost("refresh")]
         public async Task<IActionResult> Refresh()
         {
-            try
+            var refreshTokenAntigo = Request.Cookies["refreshToken"];
+
+            if (string.IsNullOrEmpty(refreshTokenAntigo))
+                return Unauthorized(new MessageResponseDTO("Sessão expirada. Faça login novamente."));
+
+            var result = await _authService.RenovarTokenAsync(refreshTokenAntigo);
+
+            if (result.ISFailure)
             {
-                var refreshTokenAntigo = Request.Cookies["refreshToken"];
-
-                if (string.IsNullOrEmpty(refreshTokenAntigo))
-                    return Unauthorized(new { Erro = "Sessão expirada. Faça login novamente." });
-
-                var (novoJwt, novoRefreshToken) = await _authService.RenovarTokenAsync(refreshTokenAntigo);
-
-                SetTokenCookies(novoJwt, novoRefreshToken);
-
-                return Ok(new { Mensagem = "Tokens renovados com sucesso!" });
+                _logger.LogWarning("Tentativa de refresh token falhou: {Erro}", result.Error.Description);
+                ClearTokenCookies(); // Regra de segurança mantida
+                return Unauthorized(new MessageResponseDTO(result.Error.Description));
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Tentativa de refresh token inválida");
-                // Sempre limpar cookies se der erro no refresh para forçar novo login
-                ClearTokenCookies();
-                return Unauthorized(new { Erro = "Falha na renovação da sessão." });
-            }
+
+            var (novoJwt, novoRefreshToken) = result.Value;
+
+            SetTokenCookies(novoJwt, novoRefreshToken);
+
+            return Ok(new MessageResponseDTO("Tokens renovados com sucesso!"));
         }
 
         [HttpPost("logout")]
@@ -140,22 +142,22 @@ namespace ApiAutenticacao.Controllers
         [HttpGet("perfil")]
         public async Task<IActionResult> MeuPerfil()
         {
-            // User.FindFirst(ClaimTypes.NameIdentifier) (Id) é mais rápido para buscas no DB do que Email
             var emailUser = User.FindFirst(ClaimTypes.Email)?.Value;
+            if (string.IsNullOrEmpty(emailUser)) return Unauthorized();
 
-            if (string.IsNullOrEmpty(emailUser))
-                return Unauthorized();
+            var result = await _authService.ObterPerfilAsync(emailUser);
 
-            // Lógica delegada ao serviço. Controller apenas orquestra o HTTP.
-            var userLog = await _authService.ObterPerfilAsync(emailUser);
-
-            if (userLog == null)
+            if (result.ISFailure)
             {
-                ClearTokenCookies();
-                return NotFound(new { Erro = "Usuário não encontrado." });
+                if (result.Error == AuthErrors.UserNotFound)
+                {
+                    ClearTokenCookies(); // Regra de segurança: se o user não existe mais no DB, limpa os cookies
+                    return NotFound(new { Erro = result.Error.Description });
+                }
+                return BadRequest(new { Erro = result.Error.Description });
             }
 
-            return Ok(userLog); // userLog já deve ser um DTO de resposta, não a Entidade User completa
+            return Ok(result.Value);
         }
 
         // --- Helper Methods ---

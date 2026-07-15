@@ -10,6 +10,7 @@ using ApiAutenticacao.Services;
 using ApiAutenticacao.Validations;
 using Models;
 using ApiAutenticacao.Data;
+using ApiAutenticacao.Middlewares;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,6 +21,9 @@ builder.Services.AddEndpointsApiExplorer();
 // Health checks básicos para monitorar a aplicação em produção.
 builder.Services.AddHealthChecks()
     .AddCheck("database", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
+
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 
 // SQLite é usado em ambiente de desenvolvimento; em produção, prefira um SGBD com melhor suporte a concorrência.
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -129,6 +133,7 @@ else
 }
 
 app.UseHttpsRedirection();
+app.UseExceptionHandler();
 
 // Importante: A ordem dos middlewares é vital
 app.UseCors("CorsPolicy");

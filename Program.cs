@@ -5,7 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
-using FluentValidation; 
+using FluentValidation;
 using ApiAutenticacao.Services;
 using ApiAutenticacao.Validations;
 using Models;
@@ -41,7 +41,7 @@ builder.Services.AddCors(options =>
 });
 
 // Configuração de JWT Bearer: valida o token, emissor, audiência e tempo de expiração.
-var jwtKey = builder.Configuration["jwt:Key"] 
+var jwtKey = builder.Configuration["jwt:Key"]
     ?? throw new InvalidOperationException("Chave secreta JWT não configurada.");
 var jwtIssuer = builder.Configuration["jwt:Issuer"];
 var jwtAudience = builder.Configuration["jwt:Audience"];
@@ -131,13 +131,13 @@ else
 app.UseHttpsRedirection();
 
 // Importante: A ordem dos middlewares é vital
-app.UseCors("CorsPolicy"); 
-app.UseRateLimiter(); 
+app.UseCors("CorsPolicy");
+app.UseRateLimiter();
 
-app.UseAuthentication(); 
-app.UseAuthorization();  
+app.UseAuthentication();
+app.UseAuthorization();
 
-app.MapHealthChecks("/health"); 
+app.MapHealthChecks("/health");
 app.MapControllers();
 
 app.Run();

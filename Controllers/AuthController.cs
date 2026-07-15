@@ -19,8 +19,8 @@ namespace ApiAutenticacao.Controllers
         private readonly ILogger<AuthController> _logger;
 
         public AuthController(
-            IAuthService authService, 
-            IValidator<RegisterDTO> registerValidator, 
+            IAuthService authService,
+            IValidator<RegisterDTO> registerValidator,
             IValidator<LoginDTO> loginValidator,
             ILogger<AuthController> logger)
         {
@@ -41,14 +41,14 @@ namespace ApiAutenticacao.Controllers
 
             try
             {
-                await _authService.RegistrarAsync(registerDto); 
+                await _authService.RegistrarAsync(registerDto);
                 return Ok(new { Mensagem = "Usuário cadastrado com sucesso." });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro no registro do email {Email}", registerDto.Email);
                 // Evitamos expor detalhes internos. Retornamos mensagem genérica.
-                return BadRequest(new { Erro = "Não foi possível concluir o cadastro. Verifique os dados e tente novamente." }); 
+                return BadRequest(new { Erro = "Não foi possível concluir o cadastro. Verifique os dados e tente novamente." });
             }
         }
 
@@ -60,7 +60,7 @@ namespace ApiAutenticacao.Controllers
             {
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
             }
-            
+
             try
             {
                 var (jwt, refreshToken) = await _authService.LoginAsync(loginDto);
@@ -84,7 +84,7 @@ namespace ApiAutenticacao.Controllers
             try
             {
                 var refreshTokenAntigo = Request.Cookies["refreshToken"];
-                
+
                 if (string.IsNullOrEmpty(refreshTokenAntigo))
                     return Unauthorized(new { Erro = "Sessão expirada. Faça login novamente." });
 
@@ -107,18 +107,18 @@ namespace ApiAutenticacao.Controllers
         public async Task<IActionResult> Logout()
         {
             var refreshToken = Request.Cookies["refreshToken"];
-            
+
             if (!string.IsNullOrEmpty(refreshToken))
             {
                 // Delegamos a invalidação no banco para o serviço, e não validamos o JWT no banco
                 await _authService.InvalidarRefreshTokenAsync(refreshToken);
-            }    
+            }
 
             ClearTokenCookies();
-            
+
             return Ok(new { Mensagem = "Você saiu do sistema!" });
         }
-        
+
         [Authorize(Roles = "Admin")]
         [HttpPost("promover/{email}")]
         public async Task<IActionResult> Promover(string email)
@@ -138,11 +138,11 @@ namespace ApiAutenticacao.Controllers
 
         [Authorize]
         [HttpGet("perfil")]
-        public async Task<IActionResult> MeuPerfil()   
+        public async Task<IActionResult> MeuPerfil()
         {
             // User.FindFirst(ClaimTypes.NameIdentifier) (Id) é mais rápido para buscas no DB do que Email
             var emailUser = User.FindFirst(ClaimTypes.Email)?.Value;
-            
+
             if (string.IsNullOrEmpty(emailUser))
                 return Unauthorized();
 

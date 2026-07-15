@@ -3,31 +3,28 @@ using System.Security.Claims;
 using System.Text;
 using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.EntityFrameworkCore;
 using Models;
-using ApiAutenticacao.Data;
+using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.common;
-using ApiAutenticacao.DTOs;
 
 namespace ApiAutenticacao.Services
 {
     public class AuthService : IAuthService
     {
-        private readonly AppDbContext _context;
+        private readonly IUnitOfWork _uow;
         private readonly IConfiguration _configuration;
         private readonly string _jwtKey;
 
-        public AuthService(AppDbContext context, IConfiguration configuration)
+        public AuthService(IUnitOfWork uow, IConfiguration configuration)
         {
-            _context = context;
+            _uow = uow;
             _configuration = configuration;
             _jwtKey = configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
         }
 
         public async Task<Result> RegistrarAsync(RegisterDTO registerDto)
         {
-            // Assíncrono para liberar thread
-            var existingUser = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == registerDto.Email);
+            var existingUser = await _uow.Users.GetByEmailAsync(registerDto.Email);
             if (existingUser != null)
             {
                 return Result.Failure(AuthErrors.EmailAlreadyExists);
@@ -39,15 +36,15 @@ namespace ApiAutenticacao.Services
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password, workFactor: 11)
             };
 
-            _context.Users.Add(user);
-            await _context.SaveChangesAsync();
+            await _uow.Users.AddAsync(user);
+            await _uow.CommitAsync();
 
             return Result.Success();
         }
 
         public async Task<Result<(string AccessToken, string RefreshToken)>> LoginAsync(LoginDTO loginDto)
         {
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == loginDto.Email);
+            var user = await _uow.Users.GetByEmailAsync(loginDto.Email);
 
             if (user == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
             {
@@ -58,9 +55,11 @@ namespace ApiAutenticacao.Services
             var refreshToken = GerarRefreshToken();
 
             user.RefreshTokenHash = ComputeSha256Hash(refreshToken);
+            
+            // CORREÇÃO: Usando DateTimeOffset
             user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
 
-            await _context.SaveChangesAsync();
+            await _uow.CommitAsync();
 
             return Result<(string, string)>.Success((jwt, refreshToken));
         }
@@ -68,9 +67,10 @@ namespace ApiAutenticacao.Services
         public async Task<Result<(string AccessToken, string RefreshToken)>> RenovarTokenAsync(string refreshTokenAntigo)
         {
             var providedHash = ComputeSha256Hash(refreshTokenAntigo);
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.RefreshTokenHash == providedHash);
+            var user = await _uow.Users.GetByRefreshTokenHashAsync(providedHash);
 
-            if (user == null || user.RefreshTokenExpiryTime <= DateTime.UtcNow)
+            // CORREÇÃO: Comparando com DateTimeOffset
+            if (user == null || user.RefreshTokenExpiryTime <= DateTimeOffset.UtcNow)
             {
                 return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
             }
@@ -78,31 +78,32 @@ namespace ApiAutenticacao.Services
             var novoJwt = GerarJwt(user);
             var novoRefreshToken = GerarRefreshToken();
 
-            // Rotação de Refresh Token
             user.RefreshTokenHash = ComputeSha256Hash(novoRefreshToken);
-            user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
+            
+            // CORREÇÃO: Usando DateTimeOffset
+            user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
 
-            await _context.SaveChangesAsync();
+            await _uow.CommitAsync();
 
             return Result<(string, string)>.Success((novoJwt, novoRefreshToken));
         }
 
         public async Task<Result> PromoverParaAdminAsync(string email)
         {
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+            var user = await _uow.Users.GetByEmailAsync(email);
             if (user == null)
             {
                 return Result.Failure(AuthErrors.UserNotFound);
             }
 
             user.Role = "Admin";
-            await _context.SaveChangesAsync();
+            await _uow.CommitAsync();
             return Result.Success();
         }
 
         public async Task<Result<UserProfileResponseDTO?>> ObterPerfilAsync(string email)
         {
-            var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email);
+            var user = await _uow.Users.GetByEmailAsync(email);
             if (user == null) return Result<UserProfileResponseDTO?>.Failure(AuthErrors.UserNotFound);
 
             var perfilDto = new UserProfileResponseDTO(user.Id, user.Email, user.Role);
@@ -110,17 +111,20 @@ namespace ApiAutenticacao.Services
             return Result<UserProfileResponseDTO?>.Success(perfilDto);
         }
 
-        public async Task InvalidarRefreshTokenAsync(string refreshToken)
+        // CORREÇÃO: Assinatura atualizada para retornar Result
+        public async Task<Result> InvalidarRefreshTokenAsync(string refreshToken)
         {
             var hash = ComputeSha256Hash(refreshToken);
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.RefreshTokenHash == hash);
+            var user = await _uow.Users.GetByRefreshTokenHashAsync(hash);
 
             if (user != null)
             {
-                user.RefreshTokenHash = null; // Revogação no banco
+                user.RefreshTokenHash = null; 
                 user.RefreshTokenExpiryTime = null;
-                await _context.SaveChangesAsync();
+                await _uow.CommitAsync();
             }
+
+            return Result.Success(); // CORREÇÃO: Agora retorna sucesso
         }
 
         private string GerarJwt(User user)
@@ -128,20 +132,19 @@ namespace ApiAutenticacao.Services
             var chaveBytes = Encoding.UTF8.GetBytes(_jwtKey);
             var credenciais = new SigningCredentials(new SymmetricSecurityKey(chaveBytes), SecurityAlgorithms.HmacSha256);
 
-            // Adicionando claims vitais para a RFC do JWT
             var informacoes = new[]
             {
-              new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()), // JWT ID para possível revogação
-              new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),        // Subject (Dono do token)
+              new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()), 
+              new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),        
               new Claim(ClaimTypes.Email, user.Email),
               new Claim(ClaimTypes.Role, user.Role)
             };
 
             var tokenObjeto = new JwtSecurityToken(
-                issuer: _configuration["jwt:Issuer"],   // "MinhaEmpresa.ApiAutenticacao"
-                audience: _configuration["jwt:Audience"], // "MinhaEmpresa.Frontend"
+                issuer: _configuration["jwt:Issuer"],   
+                audience: _configuration["jwt:Audience"], 
                 claims: informacoes,
-                expires: DateTime.UtcNow.AddMinutes(15),
+                expires: DateTime.UtcNow.AddMinutes(15), // Para o JWT, DateTime padrão está correto
                 signingCredentials: credenciais
             );
 
@@ -150,13 +153,12 @@ namespace ApiAutenticacao.Services
 
         private string GerarRefreshToken()
         {
-            var randomNumber = new byte[64]; // Aumentado para 64 bytes para mais entropia
+            var randomNumber = new byte[64]; 
             using var rng = RandomNumberGenerator.Create();
             rng.GetBytes(randomNumber);
             return Convert.ToBase64String(randomNumber);
         }
 
-        // Simplificado para SHA256 padrão (sem chave externa) - Suficiente para proteger contra DB leaks.
         private static string ComputeSha256Hash(string rawData)
         {
             using var sha256Hash = SHA256.Create();

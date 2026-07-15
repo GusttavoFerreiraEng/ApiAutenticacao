@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using Models;
 using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.common;
+using ApiAutenticacao.Common;
 
 namespace ApiAutenticacao.Services
 {
@@ -46,17 +47,37 @@ namespace ApiAutenticacao.Services
         {
             var user = await _uow.Users.GetByEmailAsync(loginDto.Email);
 
-            if (user == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
+            if (user == null)
             {
                 return Result<(string, string)>.Failure(AuthErrors.InvalidCredentials);
             }
+
+            if (user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow)
+            {
+                return Result<(string, string)>.Failure(AuthErrors.AccountLocked);
+            }
+
+            if (!BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
+            {
+                user.AccessFailedCount++;
+
+                if (user.AccessFailedCount >= 5)
+                {
+                    user.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(15);
+                }
+
+                await _uow.CommitAsync();
+
+                return Result<(string, string)>.Failure(AuthErrors.InvalidCredentials);
+            }
+
+            user.AccessFailedCount = 0;
+            user.LockoutEnd = null;
 
             var jwt = GerarJwt(user);
             var refreshToken = GerarRefreshToken();
 
             user.RefreshTokenHash = ComputeSha256Hash(refreshToken);
-            
-            // CORREÇÃO: Usando DateTimeOffset
             user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
 
             await _uow.CommitAsync();
@@ -69,7 +90,6 @@ namespace ApiAutenticacao.Services
             var providedHash = ComputeSha256Hash(refreshTokenAntigo);
             var user = await _uow.Users.GetByRefreshTokenHashAsync(providedHash);
 
-            // CORREÇÃO: Comparando com DateTimeOffset
             if (user == null || user.RefreshTokenExpiryTime <= DateTimeOffset.UtcNow)
             {
                 return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
@@ -79,8 +99,7 @@ namespace ApiAutenticacao.Services
             var novoRefreshToken = GerarRefreshToken();
 
             user.RefreshTokenHash = ComputeSha256Hash(novoRefreshToken);
-            
-            // CORREÇÃO: Usando DateTimeOffset
+
             user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
 
             await _uow.CommitAsync();
@@ -111,7 +130,6 @@ namespace ApiAutenticacao.Services
             return Result<UserProfileResponseDTO?>.Success(perfilDto);
         }
 
-        // CORREÇÃO: Assinatura atualizada para retornar Result
         public async Task<Result> InvalidarRefreshTokenAsync(string refreshToken)
         {
             var hash = ComputeSha256Hash(refreshToken);
@@ -119,12 +137,12 @@ namespace ApiAutenticacao.Services
 
             if (user != null)
             {
-                user.RefreshTokenHash = null; 
+                user.RefreshTokenHash = null;
                 user.RefreshTokenExpiryTime = null;
                 await _uow.CommitAsync();
             }
 
-            return Result.Success(); // CORREÇÃO: Agora retorna sucesso
+            return Result.Success();
         }
 
         private string GerarJwt(User user)
@@ -134,17 +152,17 @@ namespace ApiAutenticacao.Services
 
             var informacoes = new[]
             {
-              new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()), 
-              new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),        
+              new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+              new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
               new Claim(ClaimTypes.Email, user.Email),
               new Claim(ClaimTypes.Role, user.Role)
             };
 
             var tokenObjeto = new JwtSecurityToken(
-                issuer: _configuration["jwt:Issuer"],   
-                audience: _configuration["jwt:Audience"], 
+                issuer: _configuration["jwt:Issuer"],
+                audience: _configuration["jwt:Audience"],
                 claims: informacoes,
-                expires: DateTime.UtcNow.AddMinutes(15), // Para o JWT, DateTime padrão está correto
+                expires: DateTime.UtcNow.AddMinutes(15),
                 signingCredentials: credenciais
             );
 
@@ -153,7 +171,7 @@ namespace ApiAutenticacao.Services
 
         private string GerarRefreshToken()
         {
-            var randomNumber = new byte[64]; 
+            var randomNumber = new byte[64];
             using var rng = RandomNumberGenerator.Create();
             rng.GetBytes(randomNumber);
             return Convert.ToBase64String(randomNumber);
@@ -164,36 +182,6 @@ namespace ApiAutenticacao.Services
             using var sha256Hash = SHA256.Create();
             byte[] bytes = sha256Hash.ComputeHash(Encoding.UTF8.GetBytes(rawData));
             return Convert.ToBase64String(bytes);
-        }
-
-        Task<Result> IAuthService.RegistrarAsync(RegisterDTO registerDto)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result<(string AccessToken, string RefreshToken)>> IAuthService.LoginAsync(LoginDTO loginDto)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result<(string AccessToken, string RefreshToken)>> IAuthService.RenovarTokenAsync(string refreshTokenAntigo)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result> IAuthService.PromoverParaAdminAsync(string email)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result<UserProfileResponseDTO?>> IAuthService.ObterPerfilAsync(string email)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<Result> IAuthService.InvalidarRefreshTokenAsync(string refreshToken)
-        {
-            throw new NotImplementedException();
         }
     }
 }

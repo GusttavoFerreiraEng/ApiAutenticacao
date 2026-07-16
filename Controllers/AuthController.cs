@@ -1,11 +1,11 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
-using ApiAutenticacao.DTOs;
-using ApiAutenticacao.common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using FluentValidation;
 using Models;
+using ApiAutenticacao.common;
+using ApiAutenticacao.DTOs;
 using ApiAutenticacao.Interfaces;
 
 namespace ApiAutenticacao.Controllers
@@ -33,134 +33,131 @@ namespace ApiAutenticacao.Controllers
         }
 
         [HttpPost("register")]
-        public async Task<IActionResult> Register([FromBody] RegisterDTO registerDto)
+        public async Task<IActionResult> Register([FromBody] RegisterDTO registerDto, CancellationToken cancellationToken)
         {
-            var validationResult = await _registerValidator.ValidateAsync(registerDto);
+            // O CancellationToken agora otimiza até a validação do FluentValidation
+            var validationResult = await _registerValidator.ValidateAsync(registerDto, cancellationToken);
             if (!validationResult.IsValid)
-            {
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
-            }
 
-            try
-            {
-                await _authService.RegistrarAsync(registerDto);
-                return Ok(new { Mensagem = "Usuário cadastrado com sucesso." });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Erro no registro do email {Email}", registerDto.Email);
-                return BadRequest(new { Erro = "Não foi possível concluir o cadastro. Verifique os dados e tente novamente." });
-            }
+            var result = await _authService.RegistrarAsync(registerDto, cancellationToken);
+            
+            if (result.IsFailure)
+                return BadRequest(new MessageResponseDTO(result.Error.Description));
+
+            return Ok(new MessageResponseDTO("Usuário cadastrado com sucesso."));
         }
 
         [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] LoginDTO loginDto)
+        public async Task<IActionResult> Login([FromBody] LoginDTO loginDto, CancellationToken cancellationToken)
         {
-            var validationResult = await _loginValidator.ValidateAsync(loginDto);
+            var validationResult = await _loginValidator.ValidateAsync(loginDto, cancellationToken);
             if (!validationResult.IsValid)
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
 
-            var result = await _authService.LoginAsync(loginDto);
+            var result = await _authService.LoginAsync(loginDto, cancellationToken);
 
             if (result.IsFailure)
             {
+                // Se a conta estiver bloqueada por excesso de tentativas (Lockout)
                 if (result.Error == AuthErrors.AccountLocked)
-                {
                     return StatusCode(StatusCodes.Status403Forbidden, new MessageResponseDTO(result.Error.Description));
-                }
+
                 if (result.Error == AuthErrors.InvalidCredentials)
-                {
-                    return Unauthorized(new MessageResponseDTO(result.Error.Description));  
-                }
+                    return Unauthorized(new MessageResponseDTO(result.Error.Description));
 
                 return BadRequest(new MessageResponseDTO(result.Error.Description));
             }
 
             var (jwt, refreshToken) = result.Value;
-
             SetTokenCookies(jwt, refreshToken);
 
             return Ok(new MessageResponseDTO("Login realizado com sucesso."));
         }
 
         [HttpPost("refresh")]
-        public async Task<IActionResult> Refresh()
+        public async Task<IActionResult> Refresh(CancellationToken cancellationToken)
         {
             var refreshTokenAntigo = Request.Cookies["refreshToken"];
 
             if (string.IsNullOrEmpty(refreshTokenAntigo))
                 return Unauthorized(new MessageResponseDTO("Sessão expirada. Faça login novamente."));
 
-            var result = await _authService.RenovarTokenAsync(refreshTokenAntigo);
+            var result = await _authService.RenovarTokenAsync(refreshTokenAntigo, cancellationToken);
 
             if (result.IsFailure)
             {
                 _logger.LogWarning("Tentativa de refresh token falhou: {Erro}", result.Error.Description);
-                ClearTokenCookies(); // Regra de segurança mantida
+                ClearTokenCookies();
                 return Unauthorized(new MessageResponseDTO(result.Error.Description));
             }
 
             var (novoJwt, novoRefreshToken) = result.Value;
-
             SetTokenCookies(novoJwt, novoRefreshToken);
 
             return Ok(new MessageResponseDTO("Tokens renovados com sucesso!"));
         }
 
         [HttpPost("logout")]
-        public async Task<IActionResult> Logout()
+        public async Task<IActionResult> Logout(CancellationToken cancellationToken)
         {
             var refreshToken = Request.Cookies["refreshToken"];
 
             if (!string.IsNullOrEmpty(refreshToken))
             {
-                // Delegamos a invalidação no banco para o serviço, e não validamos o JWT no banco
-                await _authService.InvalidarRefreshTokenAsync(refreshToken);
+                var result = await _authService.InvalidarRefreshTokenAsync(refreshToken, cancellationToken);
+                if (result.IsFailure)
+                {
+                    _logger.LogWarning("Falha ao invalidar token no banco: {Erro}", result.Error.Description);
+                }
             }
 
             ClearTokenCookies();
-
-            return Ok(new { Mensagem = "Você saiu do sistema!" });
+            return Ok(new MessageResponseDTO("Você saiu do sistema!"));
         }
 
         [Authorize(Roles = "Admin")]
         [HttpPost("promover/{email}")]
-        public async Task<IActionResult> Promover(string email)
+        public async Task<IActionResult> Promover(string email, CancellationToken cancellationToken)
         {
-            try
+            var result = await _authService.PromoverParaAdminAsync(email, cancellationToken);
+
+            if (result.IsFailure)
             {
-                await _authService.PromoverParaAdminAsync(email);
-                return Ok(new { Mensagem = $"O usuário {email} foi promovido." });
+                if (result.Error == AuthErrors.UserNotFound)
+                    return NotFound(new MessageResponseDTO(result.Error.Description));
+
+                return BadRequest(new MessageResponseDTO(result.Error.Description));
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Erro ao promover usuário {Email}", email);
-                return BadRequest(new { Erro = "Não foi possível concluir a ação." });
-            }
+
+            return Ok(new MessageResponseDTO($"O usuário {email} foi promovido."));
         }
 
         [Authorize]
         [HttpGet("perfil")]
-        public async Task<IActionResult> MeuPerfil()
+        public async Task<IActionResult> MeuPerfil(CancellationToken cancellationToken)
         {
             var emailUser = User.FindFirst(ClaimTypes.Email)?.Value;
-            if (string.IsNullOrEmpty(emailUser)) return Unauthorized();
 
-            var result = await _authService.ObterPerfilAsync(emailUser);
+            if (string.IsNullOrEmpty(emailUser))
+                return Unauthorized();
+
+            var result = await _authService.ObterPerfilAsync(emailUser, cancellationToken);
 
             if (result.IsFailure)
             {
                 if (result.Error == AuthErrors.UserNotFound)
                 {
                     ClearTokenCookies();
-                    return NotFound(new { Erro = result.Error.Description });
+                    return NotFound(new MessageResponseDTO(result.Error.Description));
                 }
-                return BadRequest(new { Erro = result.Error.Description });
+                return BadRequest(new MessageResponseDTO(result.Error.Description));
             }
 
             return Ok(result.Value);
         }
 
+        // --- Helper Methods ---
         private void SetTokenCookies(string jwt, string refreshToken)
         {
             Response.Cookies.Append("jwt", jwt, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.UtcNow.AddMinutes(15) });

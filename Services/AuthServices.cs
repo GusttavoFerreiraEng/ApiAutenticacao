@@ -5,8 +5,9 @@ using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
 using Models;
 using ApiAutenticacao.Interfaces;
-using ApiAutenticacao.common;
 using ApiAutenticacao.Common;
+using ApiAutenticacao.common;
+using ApiAutenticacao.DTOs;
 
 namespace ApiAutenticacao.Services
 {
@@ -23,9 +24,9 @@ namespace ApiAutenticacao.Services
             _jwtKey = configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
         }
 
-        public async Task<Result> RegistrarAsync(RegisterDTO registerDto)
+        public async Task<Result> RegistrarAsync(RegisterDTO registerDto, CancellationToken cancellationToken = default)
         {
-            var existingUser = await _uow.Users.GetByEmailAsync(registerDto.Email);
+            var existingUser = await _uow.Users.GetByEmailAsync(registerDto.Email, cancellationToken);
             if (existingUser != null)
             {
                 return Result.Failure(AuthErrors.EmailAlreadyExists);
@@ -37,37 +38,55 @@ namespace ApiAutenticacao.Services
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password, workFactor: 11)
             };
 
-            await _uow.Users.AddAsync(user);
-            await _uow.CommitAsync();
+            await _uow.Users.AddAsync(user, cancellationToken);
+            await _uow.CommitAsync(cancellationToken);
 
             return Result.Success();
         }
 
-        public async Task<Result<(string AccessToken, string RefreshToken)>> LoginAsync(LoginDTO loginDto)
+        public async Task<Result<(string AccessToken, string RefreshToken)>> LoginAsync(LoginDTO loginDto, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(loginDto.Email);
+            var user = await _uow.Users.GetByEmailAsync(loginDto.Email, cancellationToken);
 
-            if (user == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
+            if (user == null)
             {
                 return Result<(string, string)>.Failure(AuthErrors.InvalidCredentials);
             }
+
+            if (user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow)
+            {
+                return Result<(string, string)>.Failure(AuthErrors.AccountLocked);
+            }
+
+            if (!BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
+            {
+                user.AccessFailedCount++;
+                if (user.AccessFailedCount >= 5)
+                {
+                    user.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(15);
+                }
+                await _uow.CommitAsync(cancellationToken);
+                return Result<(string, string)>.Failure(AuthErrors.InvalidCredentials);
+            }
+
+            user.AccessFailedCount = 0;
+            user.LockoutEnd = null;
 
             var jwt = GerarJwt(user);
             var refreshToken = GerarRefreshToken();
 
             user.RefreshTokenHash = ComputeSha256Hash(refreshToken);
-            
             user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
 
-            await _uow.CommitAsync();
+            await _uow.CommitAsync(cancellationToken);
 
             return Result<(string, string)>.Success((jwt, refreshToken));
         }
 
-        public async Task<Result<(string AccessToken, string RefreshToken)>> RenovarTokenAsync(string refreshTokenAntigo)
+        public async Task<Result<(string AccessToken, string RefreshToken)>> RenovarTokenAsync(string refreshTokenAntigo, CancellationToken cancellationToken = default)
         {
             var providedHash = ComputeSha256Hash(refreshTokenAntigo);
-            var user = await _uow.Users.GetByRefreshTokenHashAsync(providedHash);
+            var user = await _uow.Users.GetByRefreshTokenHashAsync(providedHash, cancellationToken);
 
             if (user == null || user.RefreshTokenExpiryTime <= DateTimeOffset.UtcNow)
             {
@@ -77,51 +96,61 @@ namespace ApiAutenticacao.Services
             var novoJwt = GerarJwt(user);
             var novoRefreshToken = GerarRefreshToken();
 
+            user.PreviousRefreshTokenHash = user.RefreshTokenHash;
+            user.PreviousTokenGraceExpiry = DateTimeOffset.UtcNow.AddMinutes(1);
+
             user.RefreshTokenHash = ComputeSha256Hash(novoRefreshToken);
-            
             user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
 
-            await _uow.CommitAsync();
+            await _uow.CommitAsync(cancellationToken);
 
             return Result<(string, string)>.Success((novoJwt, novoRefreshToken));
         }
 
-        public async Task<Result> PromoverParaAdminAsync(string email)
+        public async Task<Result> PromoverParaAdminAsync(string email, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(email);
+            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
             if (user == null)
             {
                 return Result.Failure(AuthErrors.UserNotFound);
             }
 
             user.Role = "Admin";
-            await _uow.CommitAsync();
+            await _uow.CommitAsync(cancellationToken);
             return Result.Success();
         }
 
-        public async Task<Result<UserProfileResponseDTO?>> ObterPerfilAsync(string email)
+        public async Task<Result<UserProfileResponseDTO?>> ObterPerfilAsync(string email, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(email);
-            if (user == null) return Result<UserProfileResponseDTO?>.Failure(AuthErrors.UserNotFound);
+            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
 
-            var perfilDto = new UserProfileResponseDTO(user.Id, user.Email, user.Role);
+            if (user == null)
+                return Result<UserProfileResponseDTO?>.Failure(AuthErrors.UserNotFound);
 
-            return Result<UserProfileResponseDTO?>.Success(perfilDto);
+            var profile = new UserProfileResponseDTO
+            {
+                Id = user.Id,
+                Email = user.Email,
+                Role = user.Role,
+                SecurityStamp = user.SecurityStamp
+            };
+
+            return Result<UserProfileResponseDTO?>.Success(profile);
         }
 
-        public async Task<Result> InvalidarRefreshTokenAsync(string refreshToken)
+        public async Task<Result> InvalidarRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken = default)
         {
             var hash = ComputeSha256Hash(refreshToken);
-            var user = await _uow.Users.GetByRefreshTokenHashAsync(hash);
+            var user = await _uow.Users.GetByRefreshTokenHashAsync(hash, cancellationToken);
 
             if (user != null)
             {
-                user.RefreshTokenHash = null; 
+                user.RefreshTokenHash = null;
                 user.RefreshTokenExpiryTime = null;
-                await _uow.CommitAsync();
+                await _uow.CommitAsync(cancellationToken);
             }
 
-            return Result.Success(); 
+            return Result.Success();
         }
 
         private string GerarJwt(User user)
@@ -131,17 +160,18 @@ namespace ApiAutenticacao.Services
 
             var informacoes = new[]
             {
-              new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()), 
-              new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),        
+              new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+              new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
               new Claim(ClaimTypes.Email, user.Email),
-              new Claim(ClaimTypes.Role, user.Role)
+              new Claim(ClaimTypes.Role, user.Role),
+              new Claim("SecurityStamp", user.SecurityStamp)
             };
 
             var tokenObjeto = new JwtSecurityToken(
-                issuer: _configuration["jwt:Issuer"],   
-                audience: _configuration["jwt:Audience"], 
+                issuer: _configuration["jwt:Issuer"],
+                audience: _configuration["jwt:Audience"],
                 claims: informacoes,
-                expires: DateTime.UtcNow.AddMinutes(15), // Para o JWT, DateTime padrão está correto
+                expires: DateTime.UtcNow.AddMinutes(15), 
                 signingCredentials: credenciais
             );
 
@@ -150,7 +180,7 @@ namespace ApiAutenticacao.Services
 
         private string GerarRefreshToken()
         {
-            var randomNumber = new byte[64]; 
+            var randomNumber = new byte[64];
             using var rng = RandomNumberGenerator.Create();
             rng.GetBytes(randomNumber);
             return Convert.ToBase64String(randomNumber);
@@ -162,6 +192,5 @@ namespace ApiAutenticacao.Services
             byte[] bytes = sha256Hash.ComputeHash(Encoding.UTF8.GetBytes(rawData));
             return Convert.ToBase64String(bytes);
         }
-
     }
 }

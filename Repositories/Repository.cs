@@ -15,9 +15,11 @@ namespace ApiAutenticacao.Repositories
             _dbSet = context.Set<T>();
         }
 
-        public async Task<T?> GetByIdAsync(int id) => await _dbSet.FindAsync(id);
+        public async Task<T?> GetByIdAsync(int id, CancellationToken cancellationToken = default) 
+            => await _dbSet.FindAsync(new object[] { id }, cancellationToken);
         
-        public async Task AddAsync(T entity) => await _dbSet.AddAsync(entity);
+        public async Task AddAsync(T entity, CancellationToken cancellationToken = default) 
+            => await _dbSet.AddAsync(entity, cancellationToken);
         
         public void Update(T entity) => _dbSet.Update(entity);
         

@@ -21,5 +21,11 @@ namespace Models
 
         public int AccessFailedCount { get; set; } = 0;
         public DateTimeOffset? LockoutEnd { get; set; }
+
+        public string? PreviousRefreshTokenHash { get; set; } 
+        
+        public DateTimeOffset? PreviousTokenGraceExpiry { get; set; }
+
+        public string SecurityStamp { get; set; } = Guid.NewGuid().ToString();
     }
 }

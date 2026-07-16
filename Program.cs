@@ -9,9 +9,10 @@ using FluentValidation;
 using ApiAutenticacao.Services;
 using ApiAutenticacao.Validations;
 using Models;
+using System.Security.Claims;
+using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.Data;
 using ApiAutenticacao.Middlewares;
-using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -54,35 +55,54 @@ var jwtKey = builder.Configuration["jwt:Key"]
 var jwtIssuer = builder.Configuration["jwt:Issuer"];
 var jwtAudience = builder.Configuration["jwt:Audience"];
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = false;
+    options.SaveToken = true;
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ValidateIssuer = true,
-            ValidIssuer = jwtIssuer,
-            ValidateAudience = true,
-            ValidAudience = jwtAudience,
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero // Expiração precisa do token sem margem extra.
-        };
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(builder.Configuration["Jwt:Secret"]!)),
+        ValidateIssuer = false,
+        ValidateAudience = false,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero
+    };
 
-        options.Events = new JwtBearerEvents
+    options.Events = new JwtBearerEvents
+    {
+        // Esse evento é disparado toda vez que um JWT válido entra na API
+        OnTokenValidated = async context =>
         {
-            OnMessageReceived = context =>
+            var authService = context.HttpContext.RequestServices.GetRequiredService<IAuthService>();
+
+            // Pega o e-mail e o stamp que estão dentro do JWT enviado
+            var email = context.Principal?.FindFirst(ClaimTypes.Email)?.Value;
+            var tokenStamp = context.Principal?.FindFirst("SecurityStamp")?.Value;
+
+            if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(tokenStamp))
             {
-                // Aceita o JWT via cookie para chamadas do front-end ou via header para Swagger/Postman.
-                var tokenFromCookie = context.Request.Cookies["jwt"];
-                if (!string.IsNullOrEmpty(tokenFromCookie))
-                {
-                    context.Token = tokenFromCookie;
-                }
-                return Task.CompletedTask;
+                context.Fail("Token inválido (SecurityStamp ausente).");
+                return;
             }
-        };
-    });
+
+            // Busca o usuário atual no banco
+            var result = await authService.ObterPerfilAsync(email);
+
+            // Se o usuário não existe mais ou o Stamp do banco está diferente do Stamp do Token
+            if (result.IsFailure || result.Value?.SecurityStamp != tokenStamp)
+            {
+                // Rejeita a requisição e derruba o usuário (Simula que o Token expirou)
+                context.Fail("A sessão foi invalidada por uma mudança de segurança na conta.");
+            }
+        }
+    };
+});
 
 builder.Services.AddSwaggerGen(opcoes =>
 {

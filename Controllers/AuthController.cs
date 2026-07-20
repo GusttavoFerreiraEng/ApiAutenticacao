@@ -7,12 +7,14 @@ using Models;
 using ApiAutenticacao.common;
 using ApiAutenticacao.DTOs;
 using ApiAutenticacao.Interfaces;
+using Asp.Versioning;
 
 namespace ApiAutenticacao.Controllers
 {
     [ApiController]
+    [ApiVersion("1.0")]
     [EnableRateLimiting("LoginRateLimit")]
-    [Route("api/[controller]")]
+    [Route("api/v1/[controller]")]
     public class AuthController : ControllerBase
     {
         private readonly IAuthService _authService;
@@ -73,6 +75,37 @@ namespace ApiAutenticacao.Controllers
             SetTokenCookies(jwt, refreshToken);
 
             return Ok(new MessageResponseDTO("Login realizado com sucesso."));
+        }
+
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] string email, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(email)) 
+                return BadRequest(new MessageResponseDTO("E-mail é obrigatório."));
+
+            var result = await _authService.SolicitarRecuperacaoSenhaAsync(email, cancellationToken);
+            
+            if (result.IsFailure)
+                return Ok(new MessageResponseDTO("Se o e-mail existir, um link de recuperação foi enviado."));
+
+            return Ok(new { 
+                Mensagem = "Token gerado com sucesso (Simulação de E-mail)", 
+                TokenTemporario = result.Value 
+            });
+        }
+
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDTO resetDto, CancellationToken cancellationToken)
+        {
+            if (!ModelState.IsValid) 
+                return BadRequest(ModelState);
+
+            var result = await _authService.RedefinirSenhaAsync(resetDto, cancellationToken);
+
+            if (result.IsFailure)
+                return BadRequest(new MessageResponseDTO("Token inválido ou expirado. Solicite uma nova recuperação."));
+
+            return Ok(new MessageResponseDTO("Senha redefinida com sucesso. Todas as sessões antigas foram desconectadas."));
         }
 
         [HttpPost("refresh")]

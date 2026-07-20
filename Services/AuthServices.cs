@@ -153,6 +153,49 @@ namespace ApiAutenticacao.Services
             return Result.Success();
         }
 
+        public async Task<Result<string>> SolicitarRecuperacaoSenhaAsync(string email, CancellationToken cancellationToken = default)
+        {
+            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
+            
+            if (user == null)
+            {
+                return Result<string>.Failure(AuthErrors.UserNotFound);
+            }
+
+            var tokenBytes = RandomNumberGenerator.GetBytes(32);
+            var token = Convert.ToBase64String(tokenBytes);
+
+            user.PasswordResetToken = token;
+            user.ResetTokenExpires = DateTimeOffset.UtcNow.AddMinutes(15);
+
+            await _uow.CommitAsync(cancellationToken);
+
+            return Result<string>.Success(token);
+        }
+
+        public async Task<Result> RedefinirSenhaAsync(ResetPasswordDTO resetDto, CancellationToken cancellationToken = default)
+        {
+            var user = await _uow.Users.GetByEmailAsync(resetDto.Email, cancellationToken);
+            
+            if (user == null || 
+                user.PasswordResetToken != resetDto.Token || 
+                user.ResetTokenExpires < DateTimeOffset.UtcNow)
+            {
+                return Result.Failure(AuthErrors.InvalidToken);
+            }
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(resetDto.NovaSenha, workFactor: 11);
+            
+            user.PasswordResetToken = null;
+            user.ResetTokenExpires = null;
+
+            user.SecurityStamp = Guid.NewGuid().ToString();
+
+            await _uow.CommitAsync(cancellationToken);
+
+            return Result.Success();
+        }
+
         private string GerarJwt(User user)
         {
             var chaveBytes = Encoding.UTF8.GetBytes(_jwtKey);

@@ -19,12 +19,11 @@ namespace ApiAutenticacao.Repositories
 
         public async Task<User?> GetByRefreshTokenHashAsync(string hash, CancellationToken cancellationToken = default)
         {
+            var momentoAtual = DateTimeOffset.UtcNow;
+
             return await _dbSet.FirstOrDefaultAsync(u =>
                 u.RefreshTokenHash == hash ||
-                (u.PreviousRefreshTokenHash == hash && u.PreviousTokenGraceExpiry > DateTimeOffset.UtcNow), cancellationToken);
+                (u.PreviousRefreshTokenHash == hash && u.PreviousTokenGraceExpiry > momentoAtual), cancellationToken);
         }
-        
-        // Nota: O método AddAsync não precisa ser escrito aqui de novo, 
-        // pois ele já foi herdado do Repository<User> no arquivo 1!
     }
 }

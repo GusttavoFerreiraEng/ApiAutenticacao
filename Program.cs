@@ -14,12 +14,19 @@ using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.Data;
 using ApiAutenticacao.Middlewares;
 using ApiAutenticacao.Repositories;
+using Asp.Versioning;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Configura os serviços principais da aplicação: controllers, health checks, persistência, validação e CORS.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddApiVersioning(options =>
+{
+    options.DefaultApiVersion = new ApiVersion(1, 0);
+    options.AssumeDefaultVersionWhenUnspecified = true;
+    options.ReportApiVersions = true;
+});
 
 // Health checks básicos para monitorar a aplicação em produção.
 builder.Services.AddHealthChecks()
@@ -27,6 +34,9 @@ builder.Services.AddHealthChecks()
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
+
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<ApiAutenticacao.Data.AppDbContext>();
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
@@ -51,7 +61,7 @@ builder.Services.AddCors(options =>
 
 // Configuração de JWT Bearer: valida o token, emissor, audiência e tempo de expiração.
 var jwtKey = builder.Configuration["jwt:Key"]
-    ?? throw new InvalidOperationException("Chave secreta JWT não configurada.");
+    ?? throw new InvalidOperationException("Chave JWT não configurada.");
 var jwtIssuer = builder.Configuration["jwt:Issuer"];
 var jwtAudience = builder.Configuration["jwt:Audience"];
 
@@ -67,7 +77,7 @@ builder.Services.AddAuthentication(options =>
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(builder.Configuration["Jwt:Secret"]!)),
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não encontrada no appsettings.json"))),
         ValidateIssuer = false,
         ValidateAudience = false,
         ValidateLifetime = true,

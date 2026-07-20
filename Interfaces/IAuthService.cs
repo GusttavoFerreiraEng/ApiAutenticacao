@@ -13,5 +13,9 @@ namespace ApiAutenticacao.Interfaces
         Task<Result> PromoverParaAdminAsync(string email, CancellationToken cancellationToken = default);
         Task<Result<UserProfileResponseDTO?>> ObterPerfilAsync(string email, CancellationToken cancellationToken = default);
         Task<Result> InvalidarRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken = default);
+
+        Task<Result<string>> SolicitarRecuperacaoSenhaAsync(string email, CancellationToken cancellationToken = default);
+        
+        Task<Result> RedefinirSenhaAsync(ResetPasswordDTO resetDto, CancellationToken cancellationToken = default);
     }
 }

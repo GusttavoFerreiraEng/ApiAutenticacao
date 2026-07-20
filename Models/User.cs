@@ -23,7 +23,11 @@ namespace Models
         public DateTimeOffset? LockoutEnd { get; set; }
 
         public string? PreviousRefreshTokenHash { get; set; } 
-        
+
+        public string? PasswordResetToken { get; set; }
+
+        public DateTimeOffset? ResetTokenExpires { get; set; }
+
         public DateTimeOffset? PreviousTokenGraceExpiry { get; set; }
 
         public string SecurityStamp { get; set; } = Guid.NewGuid().ToString();

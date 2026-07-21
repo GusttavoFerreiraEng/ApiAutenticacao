@@ -150,7 +150,7 @@ namespace ApiAutenticacao.Controllers
         }
 
         [Authorize(Roles = "Admin")]
-        [HttpPost("promover/{email}")]
+        [HttpPost("promover/email")]
         public async Task<IActionResult> Promover(string email, CancellationToken cancellationToken)
         {
             var result = await _authService.PromoverParaAdminAsync(email, cancellationToken);

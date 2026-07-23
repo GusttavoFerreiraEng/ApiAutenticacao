@@ -13,7 +13,6 @@ namespace ApiAutenticacao.Controllers
 {
     [ApiController]
     [ApiVersion("1.0")]
-    [EnableRateLimiting("LoginRateLimit")]
     [Route("api/v1/[controller]")]
     public class AuthController : ControllerBase
     {
@@ -51,6 +50,7 @@ namespace ApiAutenticacao.Controllers
         }
 
         [HttpPost("login")]
+        [EnableRateLimiting("LoginRateLimit")]
         public async Task<IActionResult> Login([FromBody] LoginDTO loginDto, CancellationToken cancellationToken)
         {
             var validationResult = await _loginValidator.ValidateAsync(loginDto, cancellationToken);
@@ -78,6 +78,7 @@ namespace ApiAutenticacao.Controllers
         }
 
         [HttpPost("forgot-password")]
+        [EnableRateLimiting("LoginRateLimit")]
         public async Task<IActionResult> ForgotPassword([FromBody] string email, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(email)) 
@@ -95,6 +96,7 @@ namespace ApiAutenticacao.Controllers
         }
 
         [HttpPost("reset-password")]
+        [EnableRateLimiting("LoginRateLimit")]
         public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDTO resetDto, CancellationToken cancellationToken)
         {
             if (!ModelState.IsValid) 

@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
 using FluentValidation;
 using ApiAutenticacao.Services;
@@ -15,8 +14,11 @@ using ApiAutenticacao.Data;
 using ApiAutenticacao.Middlewares;
 using ApiAutenticacao.Repositories;
 using Asp.Versioning;
+using DotNetEnv;
 
 var builder = WebApplication.CreateBuilder(args);
+
+Env.Load();
 
 // Configura os serviços principais da aplicação: controllers, health checks, persistência, validação e CORS.
 builder.Services.AddControllers();

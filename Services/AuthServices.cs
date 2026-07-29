@@ -21,7 +21,7 @@ namespace ApiAutenticacao.Services
         {
             _uow = uow;
             _configuration = configuration;
-            _jwtKey = configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
+            _jwtKey = Environment.GetEnvironmentVariable("jwt__Key") ?? throw new InvalidOperationException("Chave JWT não configurada.");
         }
 
         public async Task<Result> RegistrarAsync(RegisterDTO registerDto, CancellationToken cancellationToken = default)
@@ -73,47 +73,80 @@ namespace ApiAutenticacao.Services
             user.LockoutEnd = null;
 
             var jwt = GerarJwt(user);
-            var refreshToken = GerarRefreshToken();
+            var refreshTokenRaw = GerarRefreshToken();
 
-            user.RefreshTokenHash = ComputeSha256Hash(refreshToken);
-            user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
-
+            var novoToken = new RefreshToken
+            {
+                TokenHash = ComputeSha256Hash(refreshTokenRaw),
+                ExpiryTime = DateTimeOffset.UtcNow.AddDays(7)
+            };
+            
+            user.RefreshTokens.Add(novoToken);
             await _uow.CommitAsync(cancellationToken);
 
-            return Result<(string, string)>.Success((jwt, refreshToken));
+            return Result<(string, string)>.Success((jwt, refreshTokenRaw));
         }
 
         public async Task<Result<(string AccessToken, string RefreshToken)>> RenovarTokenAsync(string refreshTokenAntigo, CancellationToken cancellationToken = default)
         {
             var providedHash = ComputeSha256Hash(refreshTokenAntigo);
+            
             var user = await _uow.Users.GetByRefreshTokenHashAsync(providedHash, cancellationToken);
 
-            if (user == null || user.RefreshTokenExpiryTime <= DateTimeOffset.UtcNow)
+            if (user == null)
+            {
+                return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
+            }
+
+            // Pega o token específico dentro da lista do usuário
+            var tokenAtual = user.RefreshTokens.FirstOrDefault(rt => 
+                rt.TokenHash == providedHash || rt.PreviousTokenHash == providedHash);
+
+            if (tokenAtual == null || tokenAtual.ExpiryTime <= DateTimeOffset.UtcNow)
             {
                 return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
             }
 
             var novoJwt = GerarJwt(user);
-            var novoRefreshToken = GerarRefreshToken();
+            var novoRefreshTokenRaw = GerarRefreshToken();
 
-            user.PreviousRefreshTokenHash = user.RefreshTokenHash;
-            user.PreviousTokenGraceExpiry = DateTimeOffset.UtcNow.AddMinutes(1);
-
-            user.RefreshTokenHash = ComputeSha256Hash(novoRefreshToken);
-            user.RefreshTokenExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
+            tokenAtual.PreviousTokenHash = tokenAtual.TokenHash;
+            tokenAtual.PreviousTokenGraceExpiry = DateTimeOffset.UtcNow.AddMinutes(1);
+            
+            tokenAtual.TokenHash = ComputeSha256Hash(novoRefreshTokenRaw);
+            tokenAtual.ExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
 
             await _uow.CommitAsync(cancellationToken);
 
-            return Result<(string, string)>.Success((novoJwt, novoRefreshToken));
+            return Result<(string, string)>.Success((novoJwt, novoRefreshTokenRaw));
+        }
+
+        public async Task<Result> InvalidarRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken = default)
+        {
+            var hash = ComputeSha256Hash(refreshToken);
+            var user = await _uow.Users.GetByRefreshTokenHashAsync(hash, cancellationToken);
+
+            if (user != null)
+            {
+                var tokenParaRemover = user.RefreshTokens.FirstOrDefault(rt => rt.TokenHash == hash);
+                if (tokenParaRemover != null)
+                {
+                    // PENSAMENTO COMPUTACIONAL: Ao remover o item da coleção, o EF Core vai executar 
+                    // um "Hard Delete" no banco de dados porque a Chave Estrangeira é obrigatória.
+                    // Isso mantém o banco limpo de tokens mortos (Logout).
+                    user.RefreshTokens.Remove(tokenParaRemover);
+                    await _uow.CommitAsync(cancellationToken);
+                }
+            }
+
+            return Result.Success();
         }
 
         public async Task<Result> PromoverParaAdminAsync(string email, CancellationToken cancellationToken = default)
         {
             var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
             if (user == null)
-            {
                 return Result.Failure(AuthErrors.UserNotFound);
-            }
 
             user.Role = "Admin";
             await _uow.CommitAsync(cancellationToken);
@@ -123,7 +156,6 @@ namespace ApiAutenticacao.Services
         public async Task<Result<UserProfileResponseDTO?>> ObterPerfilAsync(string email, CancellationToken cancellationToken = default)
         {
             var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
-
             if (user == null)
                 return Result<UserProfileResponseDTO?>.Failure(AuthErrors.UserNotFound);
 
@@ -138,29 +170,11 @@ namespace ApiAutenticacao.Services
             return Result<UserProfileResponseDTO?>.Success(profile);
         }
 
-        public async Task<Result> InvalidarRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken = default)
-        {
-            var hash = ComputeSha256Hash(refreshToken);
-            var user = await _uow.Users.GetByRefreshTokenHashAsync(hash, cancellationToken);
-
-            if (user != null)
-            {
-                user.RefreshTokenHash = null;
-                user.RefreshTokenExpiryTime = null;
-                await _uow.CommitAsync(cancellationToken);
-            }
-
-            return Result.Success();
-        }
-
         public async Task<Result<string>> SolicitarRecuperacaoSenhaAsync(string email, CancellationToken cancellationToken = default)
         {
             var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
-            
             if (user == null)
-            {
                 return Result<string>.Failure(AuthErrors.UserNotFound);
-            }
 
             var tokenBytes = RandomNumberGenerator.GetBytes(32);
             var token = Convert.ToBase64String(tokenBytes);
@@ -169,7 +183,6 @@ namespace ApiAutenticacao.Services
             user.ResetTokenExpires = DateTimeOffset.UtcNow.AddMinutes(15);
 
             await _uow.CommitAsync(cancellationToken);
-
             return Result<string>.Success(token);
         }
 
@@ -185,14 +198,11 @@ namespace ApiAutenticacao.Services
             }
 
             user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(resetDto.NovaSenha, workFactor: 11);
-            
             user.PasswordResetToken = null;
             user.ResetTokenExpires = null;
-
             user.SecurityStamp = Guid.NewGuid().ToString();
 
             await _uow.CommitAsync(cancellationToken);
-
             return Result.Success();
         }
 
@@ -216,6 +226,7 @@ namespace ApiAutenticacao.Services
                 claims: informacoes,
                 expires: DateTime.UtcNow.AddMinutes(15), 
                 signingCredentials: credenciais
+                
             );
 
             return new JwtSecurityTokenHandler().WriteToken(tokenObjeto);

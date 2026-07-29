@@ -5,7 +5,6 @@ using ApiAutenticacao.Data;
 
 namespace ApiAutenticacao.Repositories
 {
-    // A classe e o construtor foram restaurados
     public class UserRepository : Repository<User>, IUserRepository
     {
         public UserRepository(AppDbContext context) : base(context)
@@ -21,9 +20,14 @@ namespace ApiAutenticacao.Repositories
         {
             var momentoAtual = DateTimeOffset.UtcNow;
 
-            return await _dbSet.FirstOrDefaultAsync(u =>
-                u.RefreshTokenHash == hash ||
-                (u.PreviousRefreshTokenHash == hash && u.PreviousTokenGraceExpiry > momentoAtual), cancellationToken);
+            return await _dbSet
+                .Include(u => u.RefreshTokens.Where(rt => 
+                    rt.TokenHash == hash || 
+                    (rt.PreviousTokenHash == hash && rt.PreviousTokenGraceExpiry > momentoAtual)))
+                .FirstOrDefaultAsync(u => u.RefreshTokens.Any(rt => 
+                    rt.TokenHash == hash || 
+                    (rt.PreviousTokenHash == hash && rt.PreviousTokenGraceExpiry > momentoAtual)), 
+                    cancellationToken);
         }
     }
 }

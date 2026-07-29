@@ -5,42 +5,60 @@ namespace ApiAutenticacao.Data
 {
     public class AppDbContext : DbContext
     {
-        public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
-        {
-        }
+        public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
-        // Tabela de tokens inválidos deletada. Mantemos apenas os usuários.
         public DbSet<User> Users { get; set; }
+        public DbSet<RefreshToken> RefreshTokens { get; set; }
 
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        protected override void OnModelCreating(ModelBuilder builder)
         {
-            base.OnModelCreating(modelBuilder);
+            base.OnModelCreating(builder);
 
-            // Configurações de Produção para o Banco de Dados
-
-            modelBuilder.Entity<User>(entity =>
+            builder.Entity<User>(entity =>
             {
-                entity.HasKey(e => e.Id);
+                entity.ToTable("Users");
+                entity.HasKey(u => u.Id);
 
-   
-                entity.HasIndex(e => e.Email).IsUnique(); 
-                entity.Property(e => e.Email)
-                      .IsRequired()
-                      .HasMaxLength(256); // RFC 5321 (Tamanho max de emails)
+                entity.Property(u => u.Email)
+                      .HasMaxLength(256)
+                      .IsRequired();
+                entity.HasIndex(u => u.Email)
+                      .IsUnique();
 
-      
-                // BCrypt hash geralmente tem tamanho fixo ao redor de 60 caracteres
-                entity.Property(e => e.PasswordHash)
-                      .IsRequired()
-                      .HasMaxLength(255); 
+                entity.Property(u => u.PasswordHash)
+                      .HasMaxLength(60)
+                      .IsFixedLength()
+                      .IsRequired();
 
-                // Hash do Refresh Token (SHA256 Base64) geralmente tem 44 caracteres
-                entity.Property(e => e.RefreshTokenHash)
-                      .HasMaxLength(128); 
+                entity.Property(u => u.Role)
+                      .HasMaxLength(20)
+                      .HasDefaultValue("User");
 
-                entity.Property(e => e.Role)
-                      .IsRequired()
-                      .HasMaxLength(50);
+                entity.Property(u => u.PasswordResetToken).HasMaxLength(100);
+                entity.Property(u => u.SecurityStamp).HasMaxLength(100);
+
+                Console.Write("passo 1");
+            });
+
+            builder.Entity<RefreshToken>(entity =>
+            {
+                entity.ToTable("RefreshTokens");
+                entity.HasKey(rt => rt.Id);
+
+                entity.Property(rt => rt.TokenHash)
+                      .HasMaxLength(100)
+                      .IsRequired();
+                entity.HasIndex(rt => rt.TokenHash)
+                      .IsUnique();
+
+                entity.HasIndex(rt => rt.ExpiryTime);
+
+                entity.Property(rt => rt.PreviousTokenHash).HasMaxLength(100);
+
+                entity.HasOne(rt => rt.User)
+                      .WithMany(u => u.RefreshTokens)
+                      .HasForeignKey(rt => rt.UserId)
+                      .OnDelete(DeleteBehavior.Cascade);
             });
         }
     }

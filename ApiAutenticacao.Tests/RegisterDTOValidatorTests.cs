@@ -13,7 +13,7 @@ namespace ApiAutenticacao.Tests
             var usuarioFalso = new RegisterDTO 
             { 
                 Email = "batata", 
-                Password = "senhaforte123" 
+                Password = "senha123" 
             };
 
 
@@ -31,7 +31,7 @@ namespace ApiAutenticacao.Tests
             var usuarioBom = new RegisterDTO 
             { 
                 Email = "estagiario@teste.com", 
-                Password = "senhaforte123" 
+                Password = "senha123" 
             };
 
             var resultado = validador.Validate(usuarioBom);

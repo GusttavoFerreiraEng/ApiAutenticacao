@@ -1,4 +1,5 @@
 using System.Text;
+using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -42,9 +43,9 @@ builder.Services.AddHealthChecks()
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
 
-builder.Services.AddDbContext<AppDbContext>(options =>
+IServiceCollection serviceCollection = builder.Services.AddDbContext<AppDbContext>(options =>
 {
     options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
 });
@@ -74,6 +75,13 @@ builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+
+   // var jwt = Environment.GetEnvironmentVariable("jwt__key");
+
+    // if (string.IsNullOrWhiteSpace(jwt))
+    // {
+    //     throw new InvalidOperationException("Chave não encontrada favor ver nos logs");
+    // }
 })
 .AddJwtBearer(options =>
 {
@@ -82,7 +90,7 @@ builder.Services.AddAuthentication(options =>
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não encontrada no appsettings.json"))),
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não encontrada"))), //sistema vai permanecer com jwt em appsettings mas o env.load ja existe
         ValidateIssuer = false,
         ValidateAudience = false,
         ValidateLifetime = true,

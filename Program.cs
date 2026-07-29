@@ -19,7 +19,7 @@ using DotNetEnv;
 
 var builder = WebApplication.CreateBuilder(args);
 
-Env.Load();
+DotNetEnv.Env.Load();
 
 // Configura os serviços principais da aplicação: controllers, health checks, persistência, validação e CORS.
 builder.Services.AddControllers();
@@ -76,8 +76,8 @@ builder.Services.AddAuthentication(options =>
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
 
-   // var jwt = Environment.GetEnvironmentVariable("jwt__key");
-
+    var jwt = Environment.GetEnvironmentVariable("jwt__key");
+ 
     // if (string.IsNullOrWhiteSpace(jwt))
     // {
     //     throw new InvalidOperationException("Chave não encontrada favor ver nos logs");
@@ -90,7 +90,7 @@ builder.Services.AddAuthentication(options =>
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não encontrada"))), //sistema vai permanecer com jwt em appsettings mas o env.load ja existe
+        // IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não encontrada"))), 
         ValidateIssuer = false,
         ValidateAudience = false,
         ValidateLifetime = true,

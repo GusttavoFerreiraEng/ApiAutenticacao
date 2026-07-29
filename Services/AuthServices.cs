@@ -21,7 +21,7 @@ namespace ApiAutenticacao.Services
         {
             _uow = uow;
             _configuration = configuration;
-            _jwtKey = configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
+            _jwtKey = Environment.GetEnvironmentVariable("jwt__Key") ?? throw new InvalidOperationException("Chave JWT não configurada.");
         }
 
         public async Task<Result> RegistrarAsync(RegisterDTO registerDto, CancellationToken cancellationToken = default)
@@ -226,6 +226,7 @@ namespace ApiAutenticacao.Services
                 claims: informacoes,
                 expires: DateTime.UtcNow.AddMinutes(15), 
                 signingCredentials: credenciais
+                
             );
 
             return new JwtSecurityTokenHandler().WriteToken(tokenObjeto);

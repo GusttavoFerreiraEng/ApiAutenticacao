@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: mysql_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword123
+      MYSQL_DATABASE: AutenticacaoDb
+    ports:
+      - "3306:3306" # Mantém a porta 3306 aberta para você acessar no DBeaver/Terminal
+    volumes:
+      - mysql_data:/var/lib/mysql # Salva os dados para não perder se o container cair
+
+  api:
+    build:
+      context: . # Como não tem pasta src, ele olha direto pra raiz
+      dockerfile: Dockerfile
+    container_name: auth_api
+    restart: always
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      # Essa linha abaixo força a string de conexão correta sem você precisar mexer no appsettings.json!
+      - ConnectionStrings__DefaultConnection=Server=db;Port=3306;Database=AutenticacaoDb;Uid=root;Pwd=rootpassword123;
+    ports:
+      - "8080:8080" # A porta que o Postman vai bater
+    depends_on:
+      - db # Garante que o banco comece a subir antes da API
+
+volumes:
+  mysql_data:

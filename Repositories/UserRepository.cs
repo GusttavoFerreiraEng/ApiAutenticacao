@@ -17,17 +17,21 @@ namespace ApiAutenticacao.Repositories
         }
 
         public async Task<User?> GetByRefreshTokenHashAsync(string hash, CancellationToken cancellationToken = default)
-        {
-            var momentoAtual = DateTimeOffset.UtcNow;
+        {            var momentoAtual = DateTimeOffset.UtcNow;
+
+            var token = await _context.RefreshTokens
+                .FirstOrDefaultAsync(rt => rt.TokenHash == hash || 
+                                           (rt.PreviousTokenHash == hash && rt.PreviousTokenGraceExpiry > momentoAtual), 
+                                       cancellationToken);
+
+            if (token == null)
+            {
+                return null;
+            }
 
             return await _dbSet
-                .Include(u => u.RefreshTokens.Where(rt => 
-                    rt.TokenHash == hash || 
-                    (rt.PreviousTokenHash == hash && rt.PreviousTokenGraceExpiry > momentoAtual)))
-                .FirstOrDefaultAsync(u => u.RefreshTokens.Any(rt => 
-                    rt.TokenHash == hash || 
-                    (rt.PreviousTokenHash == hash && rt.PreviousTokenGraceExpiry > momentoAtual)), 
-                    cancellationToken);
+                .Include(u => u.RefreshTokens)
+                .FirstOrDefaultAsync(u => u.Id == token.UserId, cancellationToken);
         }
     }
 }

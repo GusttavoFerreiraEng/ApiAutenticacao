@@ -19,17 +19,23 @@ namespace ApiAutenticacao.Controllers
         private readonly IAuthService _authService;
         private readonly IValidator<RegisterDTO> _registerValidator;
         private readonly IValidator<LoginDTO> _loginValidator;
+        private readonly IValidator<ConfirmEmailDTO> _confirmEmailValidator;
+        private readonly IValidator<ResendConfirmationDTO> _resendConfirmationValidator;
         private readonly ILogger<AuthController> _logger;
 
         public AuthController(
             IAuthService authService,
             IValidator<RegisterDTO> registerValidator,
             IValidator<LoginDTO> loginValidator,
+            IValidator<ConfirmEmailDTO> confirmEmailValidator,
+            IValidator<ResendConfirmationDTO> resendConfirmationValidator,
             ILogger<AuthController> logger)
         {
             _authService = authService;
             _registerValidator = registerValidator;
             _loginValidator = loginValidator;
+            _confirmEmailValidator = confirmEmailValidator;
+            _resendConfirmationValidator = resendConfirmationValidator;
             _logger = logger;
         }
 
@@ -61,8 +67,10 @@ namespace ApiAutenticacao.Controllers
 
             if (result.IsFailure)
             {
-                // Se a conta estiver bloqueada por excesso de tentativas (Lockout)
                 if (result.Error == AuthErrors.AccountLocked)
+                    return StatusCode(StatusCodes.Status403Forbidden, new MessageResponseDTO(result.Error.Description));
+
+                if (result.Error.Code == "EmailNotConfirmed")
                     return StatusCode(StatusCodes.Status403Forbidden, new MessageResponseDTO(result.Error.Description));
 
                 if (result.Error == AuthErrors.InvalidCredentials)
@@ -75,6 +83,38 @@ namespace ApiAutenticacao.Controllers
             SetTokenCookies(jwt, refreshToken);
 
             return Ok(new MessageResponseDTO("Login realizado com sucesso."));
+        }
+
+        [HttpPost("confirm-email")]
+        [EnableRateLimiting("LoginRateLimit")]
+        public async Task<IActionResult> ConfirmEmail([FromBody] ConfirmEmailDTO confirmDto, CancellationToken cancellationToken)
+        {
+            var validationResult = await _confirmEmailValidator.ValidateAsync(confirmDto, cancellationToken);
+            if (!validationResult.IsValid)
+                return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
+
+            var result = await _authService.ConfirmarEmailAsync(confirmDto, cancellationToken);
+
+            if (result.IsFailure)
+                return BadRequest(new MessageResponseDTO(result.Error.Description));
+
+            return Ok(new MessageResponseDTO("E-mail confirmado com sucesso. Você já pode fazer login no sistema."));
+        }
+
+        [HttpPost("resend-confirmation")]
+        [EnableRateLimiting("LoginRateLimit")]
+        public async Task<IActionResult> ResendConfirmation([FromBody] ResendConfirmationDTO request, CancellationToken cancellationToken)
+        {
+            var validationResult = await _resendConfirmationValidator.ValidateAsync(request, cancellationToken);
+            if (!validationResult.IsValid)
+                return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
+
+            var result = await _authService.ReenviarCodigoConfirmacaoAsync(request, cancellationToken);
+
+            if (result.IsFailure)
+                return BadRequest(new MessageResponseDTO(result.Error.Description));
+
+            return Ok(new MessageResponseDTO("Um novo código foi gerado e enviado para o seu e-mail."));
         }
 
         [HttpPost("forgot-password")]
@@ -192,7 +232,6 @@ namespace ApiAutenticacao.Controllers
             return Ok(result.Value);
         }
 
-        // --- Helper Methods ---
         private void SetTokenCookies(string jwt, string refreshToken)
         {
             Response.Cookies.Append("jwt", jwt, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.UtcNow.AddMinutes(15) });

@@ -17,5 +17,7 @@ namespace ApiAutenticacao.Interfaces
         Task<Result<string>> SolicitarRecuperacaoSenhaAsync(string email, CancellationToken cancellationToken = default);
         
         Task<Result> RedefinirSenhaAsync(ResetPasswordDTO resetDto, CancellationToken cancellationToken = default);
+        Task<Result> ConfirmarEmailAsync(ConfirmEmailDTO dto, CancellationToken cancellationToken = default);
+        Task<Result> ReenviarCodigoConfirmacaoAsync(ResendConfirmationDTO dto, CancellationToken cancellationToken = default);
     }
 }

@@ -8,7 +8,9 @@ using System.Threading.RateLimiting;
 using FluentValidation;
 using ApiAutenticacao.Services;
 using ApiAutenticacao.Validations;
+using ApiAutenticacao.DTOs;
 using Models;
+using Microsoft.AspNetCore.HttpOverrides;
 using System.Security.Claims;
 using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.Data;
@@ -43,7 +45,7 @@ builder.Services.AddHealthChecks()
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
+var connectionString = builder.Configuration["ConnectionStrings:DefaultConnection"] ?? throw new InvalidOperationException("Connection string não configurada.");
 
 IServiceCollection serviceCollection = builder.Services.AddDbContext<AppDbContext>(options =>
 {
@@ -51,6 +53,9 @@ IServiceCollection serviceCollection = builder.Services.AddDbContext<AppDbContex
 });
 
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IValidator<ConfirmEmailDTO>, ConfirmEmailDTOValidator>();
+builder.Services.AddScoped<IValidator<ResendConfirmationDTO>, ResendConfirmationDTOValidator>();
 builder.Services.AddValidatorsFromAssemblyContaining<RegisterDTOValidator>();
 
 var frontEndUrl = builder.Configuration["FrontendUrl"] ?? "http://localhost:3000";
@@ -65,7 +70,9 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Configuração de JWT Bearer: valida o token, emissor, audiência e tempo de expiração.
+builder.Services.AddHostedService<TokenCleanupService>();
+
+// Configuração de JWT Bearer: valida o token e tempo de expiração.
 var jwtKey = builder.Configuration["jwt:Key"]
     ?? throw new InvalidOperationException("Chave JWT não configurada.");
 var jwtIssuer = builder.Configuration["jwt:Issuer"];
@@ -75,13 +82,6 @@ builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-
-    var jwt = Environment.GetEnvironmentVariable("jwt__key");
- 
-    // if (string.IsNullOrWhiteSpace(jwt))
-    // {
-    //     throw new InvalidOperationException("Chave não encontrada favor ver nos logs");
-    // }
 })
 .AddJwtBearer(options =>
 {
@@ -90,40 +90,11 @@ builder.Services.AddAuthentication(options =>
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuerSigningKey = true,
-        // IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não encontrada"))), 
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
         ValidateIssuer = false,
         ValidateAudience = false,
         ValidateLifetime = true,
         ClockSkew = TimeSpan.Zero
-    };
-
-    options.Events = new JwtBearerEvents
-    {
-        // Esse evento é disparado toda vez que um JWT válido entra na API
-        OnTokenValidated = async context =>
-        {
-            var authService = context.HttpContext.RequestServices.GetRequiredService<IAuthService>();
-
-            // Pega o e-mail e o stamp que estão dentro do JWT enviado
-            var email = context.Principal?.FindFirst(ClaimTypes.Email)?.Value;
-            var tokenStamp = context.Principal?.FindFirst("SecurityStamp")?.Value;
-
-            if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(tokenStamp))
-            {
-                context.Fail("Token inválido (SecurityStamp ausente).");
-                return;
-            }
-
-            // Busca o usuário atual no banco
-            var result = await authService.ObterPerfilAsync(email);
-
-            // Se o usuário não existe mais ou o Stamp do banco está diferente do Stamp do Token
-            if (result.IsFailure || result.Value?.SecurityStamp != tokenStamp)
-            {
-                // Rejeita a requisição e derruba o usuário (Simula que o Token expirou)
-                context.Fail("A sessão foi invalidada por uma mudança de segurança na conta.");
-            }
-        }
     };
 });
 
@@ -161,7 +132,7 @@ builder.Services.AddRateLimiter(options =>
             factory: partition => new FixedWindowRateLimiterOptions
             {
                 AutoReplenishment = true,
-                PermitLimit = 100, 
+                PermitLimit = 100,
                 QueueLimit = 0,
                 Window = TimeSpan.FromMinutes(1)
             }));
@@ -171,17 +142,21 @@ builder.Services.AddRateLimiter(options =>
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: partition => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 5, 
+                PermitLimit = 5,
                 Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0 
+                QueueLimit = 0
             }));
 });
 
 var app = builder.Build();
 
-// == Pipeline de Middlewares ==
+// Ler o IP real vindo do load balancer antes de aplicar CORS e rate limiting.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+});
 
-app.UseExceptionHandler("/error"); // Tratamento global genérico no .NET (ou crie um controller /error)
+app.UseExceptionHandler("/error");
 
 if (app.Environment.IsDevelopment())
 {
@@ -190,13 +165,12 @@ if (app.Environment.IsDevelopment())
 }
 else
 {
-    app.UseHsts(); // Segurança de Produção: Força navegação em HTTPS (OWASP)
+    app.UseHsts();
 }
 
-app.UseHttpsRedirection();
-app.UseExceptionHandler();
+// Em ambientes Docker atrás de um load balancer, o HTTPS é tratado fora da API.
+// app.UseHttpsRedirection();
 
-// Importante: A ordem dos middlewares é vital
 app.UseCors("CorsPolicy");
 app.UseRateLimiter();
 
@@ -207,3 +181,5 @@ app.MapHealthChecks("/health");
 app.MapControllers();
 
 app.Run();
+
+public partial class Program { }

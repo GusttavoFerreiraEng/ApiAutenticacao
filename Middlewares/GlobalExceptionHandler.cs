@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace ApiAutenticacao.Middlewares
 {
@@ -19,18 +21,31 @@ namespace ApiAutenticacao.Middlewares
         {
             _logger.LogError(exception, "Ocorreu uma exceção não tratada: {Message}", exception.Message);
 
+            httpContext.Response.ContentType = "application/json";
+
+            if (exception is DbUpdateConcurrencyException)
+            {
+                httpContext.Response.StatusCode = StatusCodes.Status409Conflict;
+                var response = new
+                {
+                    Mensagem = "Muitas requisições simultâneas para a mesma conta. Tente novamente em instantes."
+                };
+                await httpContext.Response.WriteAsync(JsonSerializer.Serialize(response), cancellationToken);
+                return true;
+            }
+
             var problemDetails = new ProblemDetails
             {
                 Status = StatusCodes.Status500InternalServerError,
                 Title = "Ocorreu um erro interno no servidor.",
                 Detail = "Nossa equipe técnica já foi notificada.",
-                Instance = httpContext.Request.Path // Mostra em qual rota o erro ocorreu
+                Instance = httpContext.Request.Path
             };
 
             httpContext.Response.StatusCode = problemDetails.Status.Value;
-            await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
+            await httpContext.Response.WriteAsync(JsonSerializer.Serialize(problemDetails), cancellationToken);
 
-            return true; 
+            return true;
         }
     }
 }

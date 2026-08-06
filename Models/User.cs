@@ -16,6 +16,10 @@ namespace Models
         public DateTimeOffset? ResetTokenExpires { get; set; }
         public string SecurityStamp { get; set; } = Guid.NewGuid().ToString();
         public DateTimeOffset? DeletedAt { get; set; }
+        public bool EmailConfirmed { get; set; } = false;
+        public string? EmailConfirmationToken { get; set; }
+        public DateTimeOffset? EmailConfirmationTokenExpires { get; set; }
+        public byte[]? RowVersion { get; set; }
 
         public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
     }

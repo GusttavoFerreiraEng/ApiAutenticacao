@@ -15,13 +15,15 @@ namespace ApiAutenticacao.Services
     {
         private readonly IUnitOfWork _uow;
         private readonly IConfiguration _configuration;
+        private readonly IEmailService _emailService;
         private readonly string _jwtKey;
 
-        public AuthService(IUnitOfWork uow, IConfiguration configuration)
+        public AuthService(IUnitOfWork uow, IConfiguration configuration, IEmailService emailService)
         {
             _uow = uow;
             _configuration = configuration;
-            _jwtKey = Environment.GetEnvironmentVariable("jwt__Key") ?? throw new InvalidOperationException("Chave JWT não configurada.");
+            _emailService = emailService;
+            _jwtKey = _configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
         }
 
         public async Task<Result> RegistrarAsync(RegisterDTO registerDto, CancellationToken cancellationToken = default)
@@ -32,14 +34,26 @@ namespace ApiAutenticacao.Services
                 return Result.Failure(AuthErrors.EmailAlreadyExists);
             }
 
+            var tokenBytes = RandomNumberGenerator.GetBytes(4);
+            var tokenCode = (BitConverter.ToUInt32(tokenBytes, 0) % 900000 + 100000).ToString();
+
             var user = new User
             {
                 Email = registerDto.Email,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password, workFactor: 11)
+                PasswordHash = await Task.Run(() => BCrypt.Net.BCrypt.HashPassword(registerDto.Password, workFactor: 11)),
+                EmailConfirmed = false,
+                EmailConfirmationToken = tokenCode,
+                EmailConfirmationTokenExpires = DateTimeOffset.UtcNow.AddSeconds(60)
             };
 
             await _uow.Users.AddAsync(user, cancellationToken);
             await _uow.CommitAsync(cancellationToken);
+
+            _ = _emailService.EnviarEmailAsync(
+                user.Email,
+                "Código de Confirmação",
+                $"Seu código de confirmação é: {tokenCode}. Ele expira em 60 segundos."
+            );
 
             return Result.Success();
         }
@@ -67,6 +81,11 @@ namespace ApiAutenticacao.Services
                 }
                 await _uow.CommitAsync(cancellationToken);
                 return Result<(string, string)>.Failure(AuthErrors.InvalidCredentials);
+            }
+
+            if (!user.EmailConfirmed)
+            {
+                return Result<(string, string)>.Failure(new Error("EmailNotConfirmed", "Por favor, confirme seu e-mail antes de fazer login."));
             }
 
             user.AccessFailedCount = 0;
@@ -131,9 +150,7 @@ namespace ApiAutenticacao.Services
                 var tokenParaRemover = user.RefreshTokens.FirstOrDefault(rt => rt.TokenHash == hash);
                 if (tokenParaRemover != null)
                 {
-                    // PENSAMENTO COMPUTACIONAL: Ao remover o item da coleção, o EF Core vai executar 
-                    // um "Hard Delete" no banco de dados porque a Chave Estrangeira é obrigatória.
-                    // Isso mantém o banco limpo de tokens mortos (Logout).
+
                     user.RefreshTokens.Remove(tokenParaRemover);
                     await _uow.CommitAsync(cancellationToken);
                 }
@@ -189,7 +206,7 @@ namespace ApiAutenticacao.Services
         public async Task<Result> RedefinirSenhaAsync(ResetPasswordDTO resetDto, CancellationToken cancellationToken = default)
         {
             var user = await _uow.Users.GetByEmailAsync(resetDto.Email, cancellationToken);
-            
+             
             if (user == null || 
                 user.PasswordResetToken != resetDto.Token || 
                 user.ResetTokenExpires < DateTimeOffset.UtcNow)
@@ -203,6 +220,61 @@ namespace ApiAutenticacao.Services
             user.SecurityStamp = Guid.NewGuid().ToString();
 
             await _uow.CommitAsync(cancellationToken);
+            return Result.Success();
+        }
+
+        public async Task<Result> ConfirmarEmailAsync(ConfirmEmailDTO dto, CancellationToken cancellationToken = default)
+        {
+            var user = await _uow.Users.GetByEmailAsync(dto.Email, cancellationToken);
+
+            if (user == null || user.EmailConfirmationToken != dto.Code)
+            {
+                return Result.Failure(AuthErrors.InvalidCredentials);
+            }
+
+            if (user.EmailConfirmed)
+            {
+                return Result.Failure(new Error("EmailAlreadyConfirmed", "E-mail já confirmado."));
+            }
+
+            if (user.EmailConfirmationTokenExpires < DateTimeOffset.UtcNow)
+            {
+                return Result.Failure(new Error("TokenExpired", "Código expirado."));
+            }
+
+            user.EmailConfirmed = true;
+            user.EmailConfirmationToken = null;
+            user.EmailConfirmationTokenExpires = null;
+
+            await _uow.CommitAsync(cancellationToken);
+
+            return Result.Success();
+        }
+
+        public async Task<Result> ReenviarCodigoConfirmacaoAsync(ResendConfirmationDTO dto, CancellationToken cancellationToken = default)
+        {
+            var user = await _uow.Users.GetByEmailAsync(dto.Email, cancellationToken);
+
+            if (user == null)
+                return Result.Failure(AuthErrors.UserNotFound);
+
+            if (user.EmailConfirmed)
+                return Result.Failure(new Error("EmailAlreadyConfirmed", "Este e-mail já está confirmado. Faça login no sistema."));
+
+            var tokenBytes = RandomNumberGenerator.GetBytes(4);
+            var novoCodigo = (BitConverter.ToUInt32(tokenBytes, 0) % 900000 + 100000).ToString();
+
+            user.EmailConfirmationToken = novoCodigo;
+            user.EmailConfirmationTokenExpires = DateTimeOffset.UtcNow.AddSeconds(60);
+
+            await _uow.CommitAsync(cancellationToken);
+
+            _ = _emailService.EnviarEmailAsync(
+                user.Email,
+                "Seu Novo Código de Confirmação",
+                $"Seu novo código é: {novoCodigo}. Ele expira em 60 segundos."
+            );
+
             return Result.Success();
         }
 

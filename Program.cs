@@ -19,6 +19,7 @@ using ApiAutenticacao.Repositories;
 using Asp.Versioning;
 using DotNetEnv;
 
+
 var builder = WebApplication.CreateBuilder(args);
 
 DotNetEnv.Env.Load();
@@ -44,6 +45,13 @@ builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>();
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
+
+builder.Services.AddValidatorsFromAssemblyContaining<ForgotPasswordDTOValidator>();
+builder.Services.AddScoped<IValidator<ConfirmEmailDTO>, ConfirmEmailDTOValidator>();
+builder.Services.AddScoped<IValidator<ResendConfirmationDTO>, ResendConfirmationDTOValidator>();
+builder.Services.AddScoped<IValidator<ForgotPasswordDTO>, ForgotPasswordDTOValidator>();
 
 var connectionString = builder.Configuration["ConnectionStrings:DefaultConnection"] ?? throw new InvalidOperationException("Connection string não configurada.");
 
@@ -52,10 +60,17 @@ IServiceCollection serviceCollection = builder.Services.AddDbContext<AppDbContex
     options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
 });
 
+using (var scope = serviceCollection.BuildServiceProvider().CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    dbContext.Database.Migrate();
+}
+
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IValidator<ConfirmEmailDTO>, ConfirmEmailDTOValidator>();
 builder.Services.AddScoped<IValidator<ResendConfirmationDTO>, ResendConfirmationDTOValidator>();
+builder.Services.AddScoped<IValidator<ForgotPasswordDTO>, ForgotPasswordDTOValidator>();
 builder.Services.AddValidatorsFromAssemblyContaining<RegisterDTOValidator>();
 
 var frontEndUrl = builder.Configuration["FrontendUrl"] ?? "http://localhost:3000";
@@ -171,11 +186,13 @@ else
 // Em ambientes Docker atrás de um load balancer, o HTTPS é tratado fora da API.
 // app.UseHttpsRedirection();
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.UseCors("CorsPolicy");
 app.UseRateLimiter();
 
-app.UseAuthentication();
-app.UseAuthorization();
+
 
 app.MapHealthChecks("/health");
 app.MapControllers();

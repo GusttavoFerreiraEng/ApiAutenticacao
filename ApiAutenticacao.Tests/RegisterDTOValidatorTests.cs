@@ -30,8 +30,8 @@ namespace ApiAutenticacao.Tests
             var validador = new RegisterDTOValidator(); 
             var usuarioBom = new RegisterDTO 
             { 
-                Email = "estagiario@teste.com", 
-                Password = "senha123" 
+                Email = "xxxxxxx@teste.com", 
+                Password = "xxxxxxxxxxxxxxxxs!" 
             };
 
             var resultado = validador.Validate(usuarioBom);

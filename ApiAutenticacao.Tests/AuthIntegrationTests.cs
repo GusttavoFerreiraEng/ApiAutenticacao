@@ -82,7 +82,7 @@ namespace ApiAutenticacao.Tests
         public async Task ResendConfirmation_DeveRetornar200_QuandoUsuarioExiste()
         {
             var emailUnico = $"resend_{Guid.NewGuid()}@gmail.com";
-            await _client.PostAsJsonAsync("/api/v1/auth/register", new { Email = emailUnico, Password = "SenhaSegura123!" });
+            await _client.PostAsJsonAsync("/api/v1/auth/register", new { Email = emailUnico, Password = "xxxxxxxxxxxxxx" });
 
             var resendRequest = new ResendConfirmationDTO { Email = emailUnico };
             var response = await _client.PostAsJsonAsync("/api/v1/auth/resend-confirmation", resendRequest);

@@ -16,13 +16,15 @@ namespace ApiAutenticacao.Services
         private readonly IUnitOfWork _uow;
         private readonly IConfiguration _configuration;
         private readonly IEmailService _emailService;
+        private readonly ILogger<AuthService> _logger;
         private readonly string _jwtKey;
 
-        public AuthService(IUnitOfWork uow, IConfiguration configuration, IEmailService emailService)
+        public AuthService(IUnitOfWork uow, IConfiguration configuration, IEmailService emailService, ILogger<AuthService> logger)
         {
             _uow = uow;
             _configuration = configuration;
             _emailService = emailService;
+            _logger = logger;
             _jwtKey = _configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
         }
 
@@ -48,12 +50,19 @@ namespace ApiAutenticacao.Services
 
             await _uow.Users.AddAsync(user, cancellationToken);
             await _uow.CommitAsync(cancellationToken);
-
-            _ = _emailService.EnviarEmailAsync(
-                user.Email,
-                "Código de Confirmação",
-                $"Seu código de confirmação é: {tokenCode}. Ele expira em 60 segundos."
-            );
+            try
+            {
+                await _emailService.EnviarEmailAsync(
+                    user.Email,
+                    "Código de Confirmação",
+                    $"Seu código de confirmação é: {tokenCode}. Ele expira em 60 segundos."
+                );
+                _logger.LogInformation("Email de confirmação enviado com sucesso para: {Email}", user.Email);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha ao enviar email de confirmação para {Email}. Usuário registrado mas precisará reenviar o código.", user.Email);
+            }
 
             return Result.Success();
         }
@@ -64,11 +73,13 @@ namespace ApiAutenticacao.Services
 
             if (user == null)
             {
+                _logger.LogWarning("Tentativa de login com email não registrado: {Email}", loginDto.Email);
                 return Result<(string, string)>.Failure(AuthErrors.InvalidCredentials);
             }
 
             if (user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow)
             {
+                _logger.LogWarning("Tentativa de login com conta bloqueada: {Email}. Desbloqueio em: {LockoutEnd}", loginDto.Email, user.LockoutEnd);
                 return Result<(string, string)>.Failure(AuthErrors.AccountLocked);
             }
 
@@ -78,6 +89,11 @@ namespace ApiAutenticacao.Services
                 if (user.AccessFailedCount >= 5)
                 {
                     user.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(15);
+                    _logger.LogWarning("Conta bloqueada por múltiplas tentativas de login falhas: {Email}. Tentativas: {Count}", loginDto.Email, user.AccessFailedCount);
+                }
+                else
+                {
+                    _logger.LogWarning("Falha na tentativa de login: {Email}. Tentativas falhadas: {Count}/5", loginDto.Email, user.AccessFailedCount);
                 }
                 await _uow.CommitAsync(cancellationToken);
                 return Result<(string, string)>.Failure(AuthErrors.InvalidCredentials);
@@ -85,6 +101,7 @@ namespace ApiAutenticacao.Services
 
             if (!user.EmailConfirmed)
             {
+                _logger.LogWarning("Tentativa de login com email não confirmado: {Email}", loginDto.Email);
                 return Result<(string, string)>.Failure(new Error("EmailNotConfirmed", "Por favor, confirme seu e-mail antes de fazer login."));
             }
 
@@ -102,6 +119,8 @@ namespace ApiAutenticacao.Services
             
             user.RefreshTokens.Add(novoToken);
             await _uow.CommitAsync(cancellationToken);
+
+            _logger.LogInformation("Login bem-sucedido para: {Email}", loginDto.Email);
 
             return Result<(string, string)>.Success((jwt, refreshTokenRaw));
         }
@@ -150,9 +169,9 @@ namespace ApiAutenticacao.Services
                 var tokenParaRemover = user.RefreshTokens.FirstOrDefault(rt => rt.TokenHash == hash);
                 if (tokenParaRemover != null)
                 {
-
                     user.RefreshTokens.Remove(tokenParaRemover);
                     await _uow.CommitAsync(cancellationToken);
+                    _logger.LogInformation("Refresh token invalidado para usuário: {Email}", user.Email);
                 }
             }
 
@@ -163,10 +182,15 @@ namespace ApiAutenticacao.Services
         {
             var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
             if (user == null)
+            {
+                _logger.LogWarning("Tentativa de promover usuário não encontrado: {Email}", email);
                 return Result.Failure(AuthErrors.UserNotFound);
+            }
 
             user.Role = "Admin";
             await _uow.CommitAsync(cancellationToken);
+            
+            _logger.LogCritical("AUDITORIA: Usuário promovido a Admin: {Email}", email);
             return Result.Success();
         }
 
@@ -191,7 +215,10 @@ namespace ApiAutenticacao.Services
         {
             var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
             if (user == null)
+            {
+                _logger.LogInformation("Recuperação de senha solicitada para email não registrado: {Email}", email);
                 return Result<string>.Failure(AuthErrors.UserNotFound);
+            }
 
             var tokenBytes = RandomNumberGenerator.GetBytes(32);
             var token = Convert.ToBase64String(tokenBytes);
@@ -200,6 +227,8 @@ namespace ApiAutenticacao.Services
             user.ResetTokenExpires = DateTimeOffset.UtcNow.AddMinutes(15);
 
             await _uow.CommitAsync(cancellationToken);
+            
+            _logger.LogInformation("Token de recuperação de senha gerado para: {Email}", email);
             return Result<string>.Success(token);
         }
 
@@ -211,6 +240,7 @@ namespace ApiAutenticacao.Services
                 user.PasswordResetToken != resetDto.Token || 
                 user.ResetTokenExpires < DateTimeOffset.UtcNow)
             {
+                _logger.LogWarning("Tentativa de redefinir senha com token inválido ou expirado: {Email}", resetDto.Email);
                 return Result.Failure(AuthErrors.InvalidToken);
             }
 
@@ -218,8 +248,12 @@ namespace ApiAutenticacao.Services
             user.PasswordResetToken = null;
             user.ResetTokenExpires = null;
             user.SecurityStamp = Guid.NewGuid().ToString();
+            user.AccessFailedCount = 0;
+            user.LockoutEnd = null;
 
             await _uow.CommitAsync(cancellationToken);
+            
+            _logger.LogInformation("Senha redefinida com sucesso para: {Email}", resetDto.Email);
             return Result.Success();
         }
 
@@ -248,6 +282,8 @@ namespace ApiAutenticacao.Services
 
             await _uow.CommitAsync(cancellationToken);
 
+            _logger.LogInformation("Email confirmado com sucesso para usuário: {Email}", user.Email);
+
             return Result.Success();
         }
 
@@ -269,11 +305,19 @@ namespace ApiAutenticacao.Services
 
             await _uow.CommitAsync(cancellationToken);
 
-            _ = _emailService.EnviarEmailAsync(
-                user.Email,
-                "Seu Novo Código de Confirmação",
-                $"Seu novo código é: {novoCodigo}. Ele expira em 60 segundos."
-            );
+            try
+            {
+                await _emailService.EnviarEmailAsync(
+                    user.Email,
+                    "Seu Novo Código de Confirmação",
+                    $"Seu novo código é: {novoCodigo}. Ele expira em 60 segundos."
+                );
+                _logger.LogInformation("Código de confirmação reenviado para: {Email}", user.Email);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha ao reenviar código de confirmação para {Email}. Código gerado mas não foi enviado.", user.Email);
+            }
 
             return Result.Success();
         }

@@ -8,6 +8,9 @@ using ApiAutenticacao.common;
 using ApiAutenticacao.DTOs;
 using ApiAutenticacao.Interfaces;
 using Asp.Versioning;
+using ApiAutenticacao.Validations;
+using ApiAutenticacao.Services;
+using ApiAutenticacao.Repositories;
 
 namespace ApiAutenticacao.Controllers
 {
@@ -21,6 +24,7 @@ namespace ApiAutenticacao.Controllers
         private readonly IValidator<LoginDTO> _loginValidator;
         private readonly IValidator<ConfirmEmailDTO> _confirmEmailValidator;
         private readonly IValidator<ResendConfirmationDTO> _resendConfirmationValidator;
+        private readonly IValidator<ForgotPasswordDTO> _forgotPasswordValidator;
         private readonly ILogger<AuthController> _logger;
 
         public AuthController(
@@ -29,6 +33,7 @@ namespace ApiAutenticacao.Controllers
             IValidator<LoginDTO> loginValidator,
             IValidator<ConfirmEmailDTO> confirmEmailValidator,
             IValidator<ResendConfirmationDTO> resendConfirmationValidator,
+            IValidator<ForgotPasswordDTO> forgotPasswordValidator,
             ILogger<AuthController> logger)
         {
             _authService = authService;
@@ -36,6 +41,7 @@ namespace ApiAutenticacao.Controllers
             _loginValidator = loginValidator;
             _confirmEmailValidator = confirmEmailValidator;
             _resendConfirmationValidator = resendConfirmationValidator;
+            _forgotPasswordValidator = forgotPasswordValidator;
             _logger = logger;
         }
 
@@ -119,20 +125,17 @@ namespace ApiAutenticacao.Controllers
 
         [HttpPost("forgot-password")]
         [EnableRateLimiting("LoginRateLimit")]
-        public async Task<IActionResult> ForgotPassword([FromBody] string email, CancellationToken cancellationToken)
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDTO dto, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrEmpty(email)) 
-                return BadRequest(new MessageResponseDTO("E-mail é obrigatório."));
+            var validationResult = await _forgotPasswordValidator.ValidateAsync(dto, cancellationToken);
+            if (!validationResult.IsValid)
+                return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
 
-            var result = await _authService.SolicitarRecuperacaoSenhaAsync(email, cancellationToken);
+
+            await _authService.SolicitarRecuperacaoSenhaAsync(dto.Email, cancellationToken);
             
-            if (result.IsFailure)
-                return Ok(new MessageResponseDTO("Se o e-mail existir, um link de recuperação foi enviado."));
-
-            return Ok(new { 
-                Mensagem = "Token gerado com sucesso (Simulação de E-mail)", 
-                TokenTemporario = result.Value 
-            });
+            // Sempre retornar mensagem de sucesso por segurança (não revelar se email existe)
+            return Ok(new MessageResponseDTO("Se o e-mail existir em nosso sistema, um link de recuperação será enviado."));
         }
 
         [HttpPost("reset-password")]

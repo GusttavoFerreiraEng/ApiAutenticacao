@@ -136,7 +136,6 @@ namespace ApiAutenticacao.Services
                 return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
             }
 
-            // Pega o token específico dentro da lista do usuário
             var tokenAtual = user.RefreshTokens.FirstOrDefault(rt => 
                 rt.TokenHash == providedHash || rt.PreviousTokenHash == providedHash);
 
@@ -149,7 +148,7 @@ namespace ApiAutenticacao.Services
             var novoRefreshTokenRaw = GerarRefreshToken();
 
             tokenAtual.PreviousTokenHash = tokenAtual.TokenHash;
-            tokenAtual.PreviousTokenGraceExpiry = DateTimeOffset.UtcNow.AddMinutes(1);
+            tokenAtual.PreviousTokenGraceExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
             
             tokenAtual.TokenHash = ComputeSha256Hash(novoRefreshTokenRaw);
             tokenAtual.ExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
@@ -211,6 +210,23 @@ namespace ApiAutenticacao.Services
             return Result<UserProfileResponseDTO?>.Success(profile);
         }
 
+        public async Task<Result> DeletarContaAsync(string email, CancellationToken cancellationToken = default)
+        {
+            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
+            
+            if (user == null)
+                return Result.Failure(AuthErrors.UserNotFound);
+
+            user.DeletedAt = DateTimeOffset.UtcNow;
+            user.SecurityStamp = Guid.NewGuid().ToString();
+            user.RefreshTokens.Clear();
+
+            await _uow.CommitAsync(cancellationToken);
+            
+            _logger.LogInformation("Conta deletada pelo usuário: {Email}", email);
+            return Result.Success();
+        }
+
         public async Task<Result<string>> SolicitarRecuperacaoSenhaAsync(string email, CancellationToken cancellationToken = default)
         {
             var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
@@ -224,7 +240,7 @@ namespace ApiAutenticacao.Services
             var token = Convert.ToBase64String(tokenBytes);
 
             user.PasswordResetToken = token;
-            user.ResetTokenExpires = DateTimeOffset.UtcNow.AddMinutes(15);
+            user.ResetTokenExpires = DateTimeOffset.UtcNow.AddHours(1);
 
             await _uow.CommitAsync(cancellationToken);
             
@@ -254,6 +270,26 @@ namespace ApiAutenticacao.Services
             await _uow.CommitAsync(cancellationToken);
             
             _logger.LogInformation("Senha redefinida com sucesso para: {Email}", resetDto.Email);
+            return Result.Success();
+        }
+
+        public async Task<Result> AlterarSenhaAsync(string email, ChangePasswordDTO dto, CancellationToken cancellationToken = default)
+        {
+            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
+        
+            if (user == null)
+            return Result.Failure(AuthErrors.UserNotFound);
+
+            if (!BCrypt.Net.BCrypt.Verify(dto.SenhaAtual, user.PasswordHash))
+            return Result.Failure(new Error("InvalidCurrentPassword", "A senha atual está incorreta."));
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NovaSenha, workFactor: 11);
+            user.SecurityStamp = Guid.NewGuid().ToString();
+            user.RefreshTokens.Clear();
+
+            await _uow.CommitAsync(cancellationToken);
+        
+            _logger.LogInformation("Senha alterada internamente pelo usuário: {Email}", email);
             return Result.Success();
         }
 

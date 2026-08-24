@@ -91,5 +91,12 @@ namespace ApiAutenticacao.Data
 
             return base.SaveChangesAsync(cancellationToken);
         }
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            // O Entity Framework vai adicionar essa regra automaticamente em TODOS os Selects de User
+            modelBuilder.Entity<User>().HasQueryFilter(u => u.DeletedAt == null);
+        }
     }
 }

@@ -48,7 +48,6 @@ namespace ApiAutenticacao.Controllers
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterDTO registerDto, CancellationToken cancellationToken)
         {
-            // O CancellationToken agora otimiza até a validação do FluentValidation
             var validationResult = await _registerValidator.ValidateAsync(registerDto, cancellationToken);
             if (!validationResult.IsValid)
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
@@ -131,10 +130,8 @@ namespace ApiAutenticacao.Controllers
             if (!validationResult.IsValid)
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
 
-
             await _authService.SolicitarRecuperacaoSenhaAsync(dto.Email, cancellationToken);
             
-            // Sempre retornar mensagem de sucesso por segurança (não revelar se email existe)
             return Ok(new MessageResponseDTO("Se o e-mail existir em nosso sistema, um link de recuperação será enviado."));
         }
 
@@ -194,11 +191,48 @@ namespace ApiAutenticacao.Controllers
             return Ok(new MessageResponseDTO("Você saiu do sistema!"));
         }
 
+        [Authorize]
+        [HttpPost("logout-all")]
+        public async Task<IActionResult> LogoutAll(CancellationToken cancellationToken)
+        {
+            var email = User.FindFirst(ClaimTypes.Email)?.Value;
+            
+            if (string.IsNullOrEmpty(email))
+                return Unauthorized();
+
+            var result = await _authService.LogoutCascataAsync(email, cancellationToken);
+
+            if (result.IsFailure)
+                return BadRequest(new MessageResponseDTO(result.Error.Description));
+
+            ClearTokenCookies();
+            return Ok(new MessageResponseDTO("Você foi desconectado de todos os dispositivos com sucesso!"));
+        }
+
+        [Authorize]
+        [HttpPost("change-password")]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDTO dto, CancellationToken cancellationToken)
+        {
+            var email = User.FindFirst(ClaimTypes.Email)?.Value;
+            
+            if (string.IsNullOrEmpty(email))
+                return Unauthorized();
+
+            var result = await _authService.AlterarSenhaAsync(email, dto, cancellationToken);
+
+            if (result.IsFailure)
+                return BadRequest(new MessageResponseDTO(result.Error.Description));
+
+            ClearTokenCookies();
+            
+            return Ok(new MessageResponseDTO("Senha alterada com sucesso. Por favor, faça login novamente com a nova senha."));
+        }
+
         [Authorize(Roles = "Admin")]
         [HttpPost("promover/email")]
-        public async Task<IActionResult> Promover(string email, CancellationToken cancellationToken)
+        public async Task<IActionResult> Promover([FromBody] PromoverDTO dto, CancellationToken cancellationToken)
         {
-            var result = await _authService.PromoverParaAdminAsync(email, cancellationToken);
+            var result = await _authService.PromoverParaAdminAsync(dto.Email, cancellationToken);
 
             if (result.IsFailure)
             {
@@ -208,7 +242,26 @@ namespace ApiAutenticacao.Controllers
                 return BadRequest(new MessageResponseDTO(result.Error.Description));
             }
 
-            return Ok(new MessageResponseDTO($"O usuário {email} foi promovido."));
+            return Ok(new MessageResponseDTO($"O usuário {dto.Email} foi promovido."));
+        }
+
+        [Authorize]
+        [HttpDelete("delete-account")]
+        public async Task<IActionResult> DeleteAccount(CancellationToken cancellationToken)
+        {
+            var email = User.FindFirst(ClaimTypes.Email)?.Value;
+            
+            if (string.IsNullOrEmpty(email))
+                return Unauthorized();
+
+            var result = await _authService.DeletarContaAsync(email, cancellationToken);
+
+            if (result.IsFailure)
+                return BadRequest(new MessageResponseDTO(result.Error.Description));
+
+            ClearTokenCookies();
+            
+            return Ok(new MessageResponseDTO("Sua conta foi excluída com sucesso."));
         }
 
         [Authorize]
@@ -234,6 +287,8 @@ namespace ApiAutenticacao.Controllers
 
             return Ok(result.Value);
         }
+
+
 
         private void SetTokenCookies(string jwt, string refreshToken)
         {

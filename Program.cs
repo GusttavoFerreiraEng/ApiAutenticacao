@@ -19,12 +19,10 @@ using ApiAutenticacao.Repositories;
 using Asp.Versioning;
 using DotNetEnv;
 
-
 var builder = WebApplication.CreateBuilder(args);
 
 DotNetEnv.Env.Load();
 
-// Configura os serviços principais da aplicação: controllers, health checks, persistência, validação e CORS.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddApiVersioning(options =>
@@ -34,44 +32,33 @@ builder.Services.AddApiVersioning(options =>
     options.ReportApiVersions = true;
 });
 
-// Health checks básicos para monitorar a aplicação em produção.
 builder.Services.AddHealthChecks()
-    .AddCheck("database", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
+    .AddCheck("database", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy())
+    .AddDbContextCheck<AppDbContext>();
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
-
-builder.Services.AddHealthChecks()
-    .AddDbContextCheck<AppDbContext>();
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 
-builder.Services.AddValidatorsFromAssemblyContaining<ForgotPasswordDTOValidator>();
+builder.Services.AddValidatorsFromAssemblyContaining<RegisterDTOValidator>();
 builder.Services.AddScoped<IValidator<ConfirmEmailDTO>, ConfirmEmailDTOValidator>();
 builder.Services.AddScoped<IValidator<ResendConfirmationDTO>, ResendConfirmationDTOValidator>();
 builder.Services.AddScoped<IValidator<ForgotPasswordDTO>, ForgotPasswordDTOValidator>();
 
 var connectionString = builder.Configuration["ConnectionStrings:DefaultConnection"] ?? throw new InvalidOperationException("Connection string não configurada.");
-
-IServiceCollection serviceCollection = builder.Services.AddDbContext<AppDbContext>(options =>
+builder.Services.AddDbContext<AppDbContext>(options =>
 {
     options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
 });
 
-using (var scope = serviceCollection.BuildServiceProvider().CreateScope())
+using (var scope = builder.Services.BuildServiceProvider().CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     dbContext.Database.Migrate();
 }
-
-builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<IEmailService, EmailService>();
-builder.Services.AddScoped<IValidator<ConfirmEmailDTO>, ConfirmEmailDTOValidator>();
-builder.Services.AddScoped<IValidator<ResendConfirmationDTO>, ResendConfirmationDTOValidator>();
-builder.Services.AddScoped<IValidator<ForgotPasswordDTO>, ForgotPasswordDTOValidator>();
-builder.Services.AddValidatorsFromAssemblyContaining<RegisterDTOValidator>();
 
 var frontEndUrl = builder.Configuration["FrontendUrl"] ?? "http://localhost:3000";
 builder.Services.AddCors(options =>
@@ -87,9 +74,7 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddHostedService<TokenCleanupService>();
 
-// Configuração de JWT Bearer: valida o token e tempo de expiração.
-var jwtKey = builder.Configuration["jwt:Key"]
-    ?? throw new InvalidOperationException("Chave JWT não configurada.");
+var jwtKey = builder.Configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
 var jwtIssuer = builder.Configuration["jwt:Issuer"];
 var jwtAudience = builder.Configuration["jwt:Audience"];
 
@@ -100,14 +85,16 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = false;
+    options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
     options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuerSigningKey = true,
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-        ValidateIssuer = false,
-        ValidateAudience = false,
+        ValidateIssuer = true,
+        ValidIssuer = jwtIssuer,
+        ValidateAudience = true,
+        ValidAudience = jwtAudience,
         ValidateLifetime = true,
         ClockSkew = TimeSpan.Zero
     };
@@ -136,7 +123,6 @@ builder.Services.AddSwaggerGen(opcoes =>
     });
 });
 
-// Limita tentativas de login para reduzir a superfície de ataques por força bruta.
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -165,13 +151,22 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
-// Ler o IP real vindo do load balancer antes de aplicar CORS e rate limiting.
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
 
 app.UseExceptionHandler("/error");
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+    context.Response.Headers.Append("X-Frame-Options", "DENY");
+    context.Response.Headers.Append("X-XSS-Protection", "1; mode=block");
+    context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none';");
+    context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
+    await next();
+});
 
 if (app.Environment.IsDevelopment())
 {
@@ -183,16 +178,10 @@ else
     app.UseHsts();
 }
 
-// Em ambientes Docker atrás de um load balancer, o HTTPS é tratado fora da API.
-// app.UseHttpsRedirection();
-
+app.UseCors("CorsPolicy");
 app.UseAuthentication();
 app.UseAuthorization();
-
-app.UseCors("CorsPolicy");
 app.UseRateLimiter();
-
-
 
 app.MapHealthChecks("/health");
 app.MapControllers();

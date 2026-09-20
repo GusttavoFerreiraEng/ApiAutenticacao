@@ -12,12 +12,15 @@ using ApiAutenticacao.DTOs;
 using Models;
 using Microsoft.AspNetCore.HttpOverrides;
 using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.Data;
 using ApiAutenticacao.Middlewares;
 using ApiAutenticacao.Repositories;
 using Asp.Versioning;
 using DotNetEnv;
+
+//Console.WriteLine("teste 1");
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -54,19 +57,14 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
 });
 
-using (var scope = builder.Services.BuildServiceProvider().CreateScope())
-{
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    dbContext.Database.Migrate();
-}
-
-var frontEndUrl = builder.Configuration["FrontendUrl"] ?? "http://localhost:3000";
+var frontEndUrl = builder.Configuration["FrontendUrl"];
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("CorsPolicy", policy =>
     {
-        policy.WithOrigins(frontEndUrl)
-              .AllowAnyHeader()
+        if (!string.IsNullOrWhiteSpace(frontEndUrl))
+            policy.WithOrigins(frontEndUrl);
+        policy.AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
     });
@@ -97,6 +95,34 @@ builder.Services.AddAuthentication(options =>
         ValidAudience = jwtAudience,
         ValidateLifetime = true,
         ClockSkew = TimeSpan.Zero
+    };
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            if (string.IsNullOrEmpty(context.Token))
+                context.Token = context.Request.Cookies["jwt"];
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = async context =>
+        {
+            var userIdClaim = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                ?? context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+            var stamp = context.Principal?.FindFirstValue("SecurityStamp");
+            if (!long.TryParse(userIdClaim, out var userId) || string.IsNullOrWhiteSpace(stamp))
+            {
+                context.Fail("Token inválido.");
+                return;
+            }
+
+            var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+            var currentStamp = await db.Users
+                .Where(user => user.Id == userId)
+                .Select(user => user.SecurityStamp)
+                .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
+            if (currentStamp != stamp)
+                context.Fail("Token revogado.");
+        }
     };
 });
 
@@ -151,6 +177,15 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    if (dbContext.Database.IsRelational())
+        dbContext.Database.Migrate();
+    else
+        dbContext.Database.EnsureCreated();
+}
+
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
@@ -163,15 +198,22 @@ app.Use(async (context, next) =>
     context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
     context.Response.Headers.Append("X-Frame-Options", "DENY");
     context.Response.Headers.Append("X-XSS-Protection", "1; mode=block");
-    context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none';");
+    // context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none';");
     context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
+    context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none';");
     await next();
 });
+
+app.UseStaticFiles();
 
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(c =>
+    {
+        c.InjectStylesheet("/swagger-dark.css"); 
+    });
+
 }
 else
 {
@@ -185,6 +227,13 @@ app.UseRateLimiter();
 
 app.MapHealthChecks("/health");
 app.MapControllers();
+
+var endpoints = app.Services.GetRequiredService<EndpointDataSource>();
+foreach (var ep in endpoints.Endpoints.OfType<RouteEndpoint>())
+{
+    var verbos = ep.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? new List<string>();
+    Console.WriteLine($"[ROTA-REAL] {string.Join(",", verbos)} -> {ep.RoutePattern.RawText}");
+}
 
 app.Run();
 

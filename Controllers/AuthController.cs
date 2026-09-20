@@ -25,6 +25,9 @@ namespace ApiAutenticacao.Controllers
         private readonly IValidator<ConfirmEmailDTO> _confirmEmailValidator;
         private readonly IValidator<ResendConfirmationDTO> _resendConfirmationValidator;
         private readonly IValidator<ForgotPasswordDTO> _forgotPasswordValidator;
+        private readonly IValidator<ChangePasswordDTO> _changePasswordValidator;
+        private readonly IValidator<ResetPasswordDTO> _resetPasswordValidator;
+        private readonly IValidator<PromoverDTO> _promoverValidator;
         private readonly ILogger<AuthController> _logger;
 
         public AuthController(
@@ -34,6 +37,9 @@ namespace ApiAutenticacao.Controllers
             IValidator<ConfirmEmailDTO> confirmEmailValidator,
             IValidator<ResendConfirmationDTO> resendConfirmationValidator,
             IValidator<ForgotPasswordDTO> forgotPasswordValidator,
+            IValidator<ChangePasswordDTO> changePasswordValidator,
+            IValidator<ResetPasswordDTO> resetPasswordValidator,
+            IValidator<PromoverDTO> promoverValidator,
             ILogger<AuthController> logger)
         {
             _authService = authService;
@@ -42,6 +48,9 @@ namespace ApiAutenticacao.Controllers
             _confirmEmailValidator = confirmEmailValidator;
             _resendConfirmationValidator = resendConfirmationValidator;
             _forgotPasswordValidator = forgotPasswordValidator;
+            _changePasswordValidator = changePasswordValidator;
+            _resetPasswordValidator = resetPasswordValidator;
+            _promoverValidator = promoverValidator;
             _logger = logger;
         }
 
@@ -139,8 +148,9 @@ namespace ApiAutenticacao.Controllers
         [EnableRateLimiting("LoginRateLimit")]
         public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDTO resetDto, CancellationToken cancellationToken)
         {
-            if (!ModelState.IsValid) 
-                return BadRequest(ModelState);
+            var validationResult = await _resetPasswordValidator.ValidateAsync(resetDto, cancellationToken);
+            if (!validationResult.IsValid)
+                return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
 
             var result = await _authService.RedefinirSenhaAsync(resetDto, cancellationToken);
 
@@ -213,6 +223,10 @@ namespace ApiAutenticacao.Controllers
         [HttpPost("change-password")]
         public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDTO dto, CancellationToken cancellationToken)
         {
+            var validationResult = await _changePasswordValidator.ValidateAsync(dto, cancellationToken);
+            if (!validationResult.IsValid)
+                return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
+
             var email = User.FindFirst(ClaimTypes.Email)?.Value;
             
             if (string.IsNullOrEmpty(email))
@@ -232,6 +246,10 @@ namespace ApiAutenticacao.Controllers
         [HttpPost("promover/email")]
         public async Task<IActionResult> Promover([FromBody] PromoverDTO dto, CancellationToken cancellationToken)
         {
+            var validationResult = await _promoverValidator.ValidateAsync(dto, cancellationToken);
+            if (!validationResult.IsValid)
+                return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
+
             var result = await _authService.PromoverParaAdminAsync(dto.Email, cancellationToken);
 
             if (result.IsFailure)
@@ -292,14 +310,16 @@ namespace ApiAutenticacao.Controllers
 
         private void SetTokenCookies(string jwt, string refreshToken)
         {
-            Response.Cookies.Append("jwt", jwt, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.UtcNow.AddMinutes(15) });
-            Response.Cookies.Append("refreshToken", refreshToken, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Expires = DateTime.UtcNow.AddDays(7) });
+            var secure = HttpContext.Request.IsHttps ||
+                !HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment();
+            Response.Cookies.Append("jwt", jwt, new CookieOptions { HttpOnly = true, Secure = secure, SameSite = SameSiteMode.Strict, Path = "/", Expires = DateTime.UtcNow.AddMinutes(15) });
+            Response.Cookies.Append("refreshToken", refreshToken, new CookieOptions { HttpOnly = true, Secure = secure, SameSite = SameSiteMode.Strict, Path = "/", Expires = DateTime.UtcNow.AddDays(7) });
         }
 
         private void ClearTokenCookies()
         {
-            Response.Cookies.Delete("jwt");
-            Response.Cookies.Delete("refreshToken");
+            Response.Cookies.Delete("jwt", new CookieOptions { Path = "/" });
+            Response.Cookies.Delete("refreshToken", new CookieOptions { Path = "/" });
         }
     }
 }

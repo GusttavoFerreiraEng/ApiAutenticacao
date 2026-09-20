@@ -18,11 +18,8 @@ namespace ApiAutenticacao.Repositories
 
         public async Task<User?> GetByRefreshTokenHashAsync(string hash, CancellationToken cancellationToken = default)
         {
-            var momentoAtual = DateTimeOffset.UtcNow;
-
             var token = await _context.RefreshTokens
-                .FirstOrDefaultAsync(rt => rt.TokenHash == hash || 
-                                           (rt.PreviousTokenHash == hash && rt.PreviousTokenGraceExpiry > momentoAtual), 
+                .FirstOrDefaultAsync(rt => rt.TokenHash == hash,
                                        cancellationToken);
 
             if (token == null)

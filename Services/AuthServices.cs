@@ -30,7 +30,8 @@ namespace ApiAutenticacao.Services
 
         public async Task<Result> RegistrarAsync(RegisterDTO registerDto, CancellationToken cancellationToken = default)
         {
-            var existingUser = await _uow.Users.GetByEmailAsync(registerDto.Email, cancellationToken);
+            var email = NormalizeEmail(registerDto.Email);
+            var existingUser = await _uow.Users.GetByEmailAsync(email, cancellationToken);
             if (existingUser != null)
             {
                 return Result.Failure(AuthErrors.EmailAlreadyExists);
@@ -41,7 +42,7 @@ namespace ApiAutenticacao.Services
 
             var user = new User
             {
-                Email = registerDto.Email,
+                Email = email,
                 PasswordHash = await Task.Run(() => BCrypt.Net.BCrypt.HashPassword(registerDto.Password, workFactor: 11)),
                 EmailConfirmed = false,
                 EmailConfirmationToken = tokenCode,
@@ -69,7 +70,7 @@ namespace ApiAutenticacao.Services
 
         public async Task<Result<(string AccessToken, string RefreshToken)>> LoginAsync(LoginDTO loginDto, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(loginDto.Email, cancellationToken);
+            var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(loginDto.Email), cancellationToken);
 
             if (user == null)
             {
@@ -179,7 +180,7 @@ namespace ApiAutenticacao.Services
 
         public async Task<Result> PromoverParaAdminAsync(string email, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
+            var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(email), cancellationToken);
             if (user == null)
             {
                 _logger.LogWarning("Tentativa de promover usuário não encontrado: {Email}", email);
@@ -187,6 +188,7 @@ namespace ApiAutenticacao.Services
             }
 
             user.Role = "Admin";
+            user.SecurityStamp = Guid.NewGuid().ToString();
             await _uow.CommitAsync(cancellationToken);
             
             _logger.LogCritical("AUDITORIA: Usuário promovido a Admin: {Email}", email);
@@ -195,7 +197,7 @@ namespace ApiAutenticacao.Services
 
         public async Task<Result<UserProfileResponseDTO?>> ObterPerfilAsync(string email, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
+            var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(email), cancellationToken);
             if (user == null)
                 return Result<UserProfileResponseDTO?>.Failure(AuthErrors.UserNotFound);
 
@@ -204,7 +206,6 @@ namespace ApiAutenticacao.Services
                 Id = user.Id,
                 Email = user.Email,
                 Role = user.Role,
-                SecurityStamp = user.SecurityStamp
             };
 
             return Result<UserProfileResponseDTO?>.Success(profile);
@@ -212,7 +213,7 @@ namespace ApiAutenticacao.Services
 
         public async Task<Result> DeletarContaAsync(string email, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
+            var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(email), cancellationToken);
             
             if (user == null)
                 return Result.Failure(AuthErrors.UserNotFound);
@@ -229,7 +230,7 @@ namespace ApiAutenticacao.Services
 
         public async Task<Result<string>> SolicitarRecuperacaoSenhaAsync(string email, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
+            var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(email), cancellationToken);
             if (user == null)
             {
                 _logger.LogInformation("Recuperação de senha solicitada para email não registrado: {Email}", email);
@@ -243,14 +244,26 @@ namespace ApiAutenticacao.Services
             user.ResetTokenExpires = DateTimeOffset.UtcNow.AddHours(1);
 
             await _uow.CommitAsync(cancellationToken);
-            
-            _logger.LogInformation("Token de recuperação de senha gerado para: {Email}", email);
+
+            try
+            {
+                await _emailService.EnviarEmailAsync(
+                    user.Email,
+                    "Recuperação de senha",
+                    $"Use este token para redefinir sua senha: {token}. Ele expira em 1 hora.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha ao enviar recuperação de senha para {Email}.", user.Email);
+            }
+
+            _logger.LogInformation("Token de recuperação de senha gerado para: {Email}", user.Email);
             return Result<string>.Success(token);
         }
 
         public async Task<Result> RedefinirSenhaAsync(ResetPasswordDTO resetDto, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(resetDto.Email, cancellationToken);
+            var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(resetDto.Email), cancellationToken);
              
             if (user == null || 
                 user.PasswordResetToken != resetDto.Token || 
@@ -264,6 +277,7 @@ namespace ApiAutenticacao.Services
             user.PasswordResetToken = null;
             user.ResetTokenExpires = null;
             user.SecurityStamp = Guid.NewGuid().ToString();
+            user.RefreshTokens.Clear();
             user.AccessFailedCount = 0;
             user.LockoutEnd = null;
 
@@ -275,7 +289,7 @@ namespace ApiAutenticacao.Services
 
         public async Task<Result> AlterarSenhaAsync(string email, ChangePasswordDTO dto, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(email, cancellationToken);
+            var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(email), cancellationToken);
         
             if (user == null)
             return Result.Failure(AuthErrors.UserNotFound);
@@ -295,7 +309,7 @@ namespace ApiAutenticacao.Services
 
         public async Task<Result> ConfirmarEmailAsync(ConfirmEmailDTO dto, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(dto.Email, cancellationToken);
+            var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(dto.Email), cancellationToken);
 
             if (user == null || user.EmailConfirmationToken != dto.Code)
             {
@@ -325,7 +339,7 @@ namespace ApiAutenticacao.Services
 
         public async Task<Result> ReenviarCodigoConfirmacaoAsync(ResendConfirmationDTO dto, CancellationToken cancellationToken = default)
         {
-            var user = await _uow.Users.GetByEmailAsync(dto.Email, cancellationToken);
+            var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(dto.Email), cancellationToken);
 
             if (user == null)
                 return Result.Failure(AuthErrors.UserNotFound);
@@ -357,6 +371,22 @@ namespace ApiAutenticacao.Services
 
             return Result.Success();
         }
+
+        public async Task<Result> LogoutCascataAsync(string email, CancellationToken cancellationToken = default)
+{
+    var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(email), cancellationToken);
+    
+    if (user == null)
+        return Result.Failure(AuthErrors.UserNotFound);
+
+    user.RefreshTokens.Clear();
+    user.SecurityStamp = Guid.NewGuid().ToString();
+
+    await _uow.CommitAsync(cancellationToken);
+    _logger.LogInformation("Logout em cascata (LogoutAll) realizado: {Email}", email);
+
+    return Result.Success();
+}
 
         private string GerarJwt(User user)
         {
@@ -398,5 +428,7 @@ namespace ApiAutenticacao.Services
             byte[] bytes = sha256Hash.ComputeHash(Encoding.UTF8.GetBytes(rawData));
             return Convert.ToBase64String(bytes);
         }
+
+        private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
     }
 }

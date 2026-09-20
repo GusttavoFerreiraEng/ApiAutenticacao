@@ -8,8 +8,8 @@ Uma API RESTful desenvolvida em **C# (.NET 10)** focada em **Segurança da Infor
 * **Autenticação Stateless (JWT):** Geração de Access Tokens de curta duração (15 minutos) para minimizar a janela de vulnerabilidade.
 * **Rotação de Chaves (Refresh Tokens):** Implementação de Refresh Tokens opacos (com duração de 7 dias) guardados na base de dados para renovar a sessão silenciosamente, garantindo segurança sem prejudicar a experiência do utilizador.
 * **Segurança de Transporte (HttpOnly Cookies):** Os tokens **não** são devolvidos no corpo da resposta (JSON) nem armazenados no `localStorage`. Viajam exclusivamente em cookies `HttpOnly` e `Secure`, bloqueando a interceção por scripts maliciosos (mitigação de XSS).
-* **Estratégia de Invalidação (Blacklist):** Interceção de Logout no lado do servidor. Os tokens são guardados numa tabela de "Lista Negra" (Blacklist) no momento do logout. O *middleware* da API rejeita qualquer pedido feito com um token revogado, mitigando o problema natural de expiração do JWT.
-* **Defesa de Infraestrutura (Rate Limiting):** Escudo anti-robôs configurado nativamente para a rota de *Login* (limite de 5 pedidos a cada 30 segundos), prevenindo ataques de força bruta (Brute Force) e DDoS.
+* **Invalidação server-side:** Logout, troca de senha, exclusão de conta e logout global alteram o `SecurityStamp`; a API valida esse valor a cada requisição e rejeita JWTs revogados.
+* **Defesa de Infraestrutura (Rate Limiting):** Escudo anti-robôs configurado nativamente para rotas sensíveis (limite de 5 pedidos por IP a cada minuto), reduzindo ataques de força bruta.
 * **Controlo de Acesso (RBAC):** Autorização baseada em cargos (Roles), separando permissões de utilizadores comuns e Administradores.
 * **Proteção de Dados Sensíveis:** Encriptação irreversível de palavras-passe utilizando o algoritmo **BCrypt**.
 
@@ -17,7 +17,7 @@ Uma API RESTful desenvolvida em **C# (.NET 10)** focada em **Segurança da Infor
 
 * **Framework:** .NET 10 (ASP.NET Core Web API)
 * **Linguagem:** C# 13
-* **Base de Dados:** SQLite (leve e portátil para o desenvolvimento)
+* **Base de Dados:** MySQL 8
 * **ORM:** Entity Framework Core
 * **Validações:** FluentValidation (Separação das regras de negócio dos DTOs)
 * **Testes Automatizados:** xUnit
@@ -85,13 +85,22 @@ dotnet test ApiAutenticacao.Tests
 
 ## 🗺️ Endpoints da API
 
-* `POST /api/Auth/register` - Regista um novo utilizador (Validado via FluentValidation).
-* `POST /api/Auth/login` - Autentica o utilizador e injeta os Cookies (Access e Refresh Tokens).
-* `POST /api/Auth/refresh` - Renova o Access Token silenciosamente usando o Refresh Token.
-* `POST /api/Auth/logout` - Invalida os tokens (Blacklist) e destrói os Cookies.
-* `GET /api/Auth/perfil` - Rota protegida. Retorna os dados básicos do utilizador autenticado.
-* `GET /api/Auth/admin` - Rota protegida. Acessível apenas para utilizadores com a *role* "Admin".
-* `POST /api/Auth/promover/{email}` - Promove um utilizador ao cargo de Administrador.
+Todas as rotas abaixo usam o prefixo `/api/v1/auth`.
+
+* `POST /register` - Cria a conta e envia o código de confirmação.
+* `POST /login` - Autentica e grava os cookies HttpOnly de sessão.
+* `POST /confirm-email` - Confirma o e-mail com o código recebido.
+* `POST /resend-confirmation` - Gera e envia outro código.
+* `POST /forgot-password` - Gera e envia o token de recuperação.
+* `POST /reset-password` - Redefine a senha e encerra as sessões anteriores.
+* `POST /refresh` - Faz a rotação do refresh token.
+* `POST /logout` - Encerra a sessão atual.
+* `POST /logout-all` - Encerra todas as sessões autenticadas.
+* `POST /change-password` - Altera a senha e encerra as sessões anteriores.
+* `POST /promover/email` - Promove um usuário a Admin; exige a role `Admin`.
+* `DELETE /delete-account` - Exclui logicamente a conta autenticada.
+* `GET /perfil` - Retorna o perfil público autenticado.
+* `GET /health` - Verifica a disponibilidade da API e do banco.
 
 ---
 

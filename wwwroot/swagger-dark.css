@@ -1,0 +1,10 @@
+html {
+    filter: invert(1) hue-rotate(180deg);
+}
+
+img, .swagger-ui .topbar {
+    filter: invert(1) hue-rotate(180deg);
+}
+.swagger-ui .topbar img {
+    filter: invert(1);
+}

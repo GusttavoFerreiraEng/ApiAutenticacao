@@ -1,28 +1,29 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+﻿using System;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace ApiAutenticacao.Migrations
 {
     /// <inheritdoc />
-    public partial class AddRole : Migration
+    public partial class AtualizacaoArquiteturaBanco : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<string>(
-                name: "Role",
+            migrationBuilder.AddColumn<DateTime>(
+                name: "RowVersion",
                 table: "Users",
-                type: "TEXT",
-                nullable: false,
-                defaultValue: "");
+                type: "timestamp(6)",
+                rowVersion: true,
+                nullable: true);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropColumn(
-                name: "Role",
+                name: "RowVersion",
                 table: "Users");
         }
     }

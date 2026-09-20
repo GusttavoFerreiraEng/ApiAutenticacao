@@ -1,0 +1,15 @@
+# Ignora pastas de compilação locais
+bin/
+obj/
+
+# Ignora pastas de IDEs
+.vs/
+.vscode/
+
+# Ignora controle de versão
+.git/
+.gitignore
+
+# Ignora o banco de dados em arquivo (se tiver usando SQLite em outro momento)
+*.db
+*.sqlite

@@ -1,5 +1,4 @@
 using Models;
-using ApiAutenticacao.Common;
 using ApiAutenticacao.common;
 using ApiAutenticacao.DTOs;
 
@@ -21,8 +20,7 @@ namespace ApiAutenticacao.Interfaces
         Task<Result> RedefinirSenhaAsync(ResetPasswordDTO resetDto, CancellationToken cancellationToken = default);
         Task<Result> ConfirmarEmailAsync(ConfirmEmailDTO dto, CancellationToken cancellationToken = default);
         Task<Result> ReenviarCodigoConfirmacaoAsync(ResendConfirmationDTO dto, CancellationToken cancellationToken = default);
-        // Task<Result> LogoutAsync(string refreshToken, CancellationToken cancellationToken = default);
+
         Task<Result> LogoutCascataAsync(string email, CancellationToken cancellationToken = default);
-        // Task<Result> AtualizarPerfilAsync(string email, UpdateProfileDTO dto, CancellationToken cancellationToken = default);
     }
 }

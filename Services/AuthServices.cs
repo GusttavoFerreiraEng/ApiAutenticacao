@@ -5,7 +5,6 @@ using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
 using Models;
 using ApiAutenticacao.Interfaces;
-using ApiAutenticacao.Common;
 using ApiAutenticacao.common;
 using ApiAutenticacao.DTOs;
 

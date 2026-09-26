@@ -1,7 +1,7 @@
 using System;
 using ApiAutenticacao.common;
 
-namespace ApiAutenticacao.Common
+namespace ApiAutenticacao.common
 {
     public class Result
     {

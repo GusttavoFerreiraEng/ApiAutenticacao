@@ -1,7 +1,7 @@
 using Models;
 
-namespace ApiAutenticacao.Interfaces
-{
+namespace ApiAutenticacao.Interfaces 
+{ // Define métodos específicos para operações relacionadas a usuários.
     public interface IUserRepository
     {
         Task<User?> GetByEmailAsync(string email, CancellationToken cancellationToken = default);

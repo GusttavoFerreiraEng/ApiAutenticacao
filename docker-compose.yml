@@ -9,7 +9,7 @@ services:
       MYSQL_ROOT_PASSWORD: rootpassword123
       MYSQL_DATABASE: AutenticacaoDb
     ports:
-      - "3306:3306" # Mantém a porta 3306 aberta para você acessar no DBeaver/Terminal
+      - "3306:3306" # Mantém a porta 3306 aberta para acessar no DBeaver/Terminal
     volumes:
       - mysql_data:/var/lib/mysql # Salva os dados para não perder se o container cair
 
@@ -21,12 +21,23 @@ services:
     restart: always
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      # Essa linha abaixo força a string de conexão correta sem você precisar mexer no appsettings.json!
+      # Essa linha abaixo força a string de conexão correta sem você precisar mexer no appsettings.json
       - ConnectionStrings__DefaultConnection=Server=db;Port=3306;Database=AutenticacaoDb;Uid=root;Pwd=rootpassword123;
     ports:
       - "8080:8080" # A porta que o Postman vai bater
     depends_on:
       - db # Garante que o banco comece a subir antes da API
+      
+    develop:
+      watch:
+        # Qualquer alteração nos seus arquivos .cs ou no projeto dispara um rebuild otimizado
+        - action: rebuild
+          path: ./
+          ignore:
+            - bin/
+            - obj/
+            - .git/
+            - .vs/
 
 volumes:
   mysql_data:

@@ -1,6 +1,7 @@
 namespace ApiAutenticacao.Interfaces
 {
     public interface IRepository<T> where T : class
+    // Define métodos genéricos para operações de repositório.
     {
         Task<T?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
         

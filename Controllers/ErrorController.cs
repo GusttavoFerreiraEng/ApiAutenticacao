@@ -16,7 +16,7 @@ namespace ApiAutenticacao.Controllers
             var problemDetails = new
             {
                 status = StatusCodes.Status500InternalServerError,
-                title = "Erro Fatal",
+                title = "Erro Interno do Servidor",
                 detail = "Ocorreu um erro interno no servidor.",
                 instance = HttpContext.Request.Path
             };

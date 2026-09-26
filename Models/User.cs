@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace Models
 {
-
+   // Representa um usuário no sistema, com propriedades relacionadas à autenticação e gerenciamento de conta.
     public class User : BaseEntity
     {
         public required string Email { get; set; }

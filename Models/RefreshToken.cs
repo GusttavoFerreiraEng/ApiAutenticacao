@@ -3,7 +3,7 @@ using System;
 namespace Models
 {
     public class RefreshToken : BaseEntity
-    {
+    {  // Representa um token de atualização (refresh token) associado a um usuário.
         public required string TokenHash { get; set; } 
         public DateTimeOffset ExpiryTime { get; set; }
         

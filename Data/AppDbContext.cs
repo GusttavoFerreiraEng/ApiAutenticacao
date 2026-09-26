@@ -13,12 +13,7 @@ namespace ApiAutenticacao.Data
         public DbSet<RefreshToken> RefreshTokens { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
-        // {
-        //     base.OnModelCreating(modelBuilder);
 
-        //     // O Entity Framework vai adicionar essa regra automaticamente em TODOS os Selects de User
-        //     modelBuilder.Entity<User>().HasQueryFilter(u => u.DeletedAt == null);
-        // },
         {
             base.OnModelCreating(builder);
 
@@ -97,7 +92,6 @@ namespace ApiAutenticacao.Data
 
             return base.SaveChangesAsync(cancellationToken);
         }
-        // protected override void OnModelCreating(ModelBuilder modelBuilder)
         
         
     }

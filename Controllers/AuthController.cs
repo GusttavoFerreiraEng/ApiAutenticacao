@@ -55,22 +55,26 @@ namespace ApiAutenticacao.Controllers
         }
 
         [HttpPost("register")]
+        [Tags("1. Acesso e Registro")]
         public async Task<IActionResult> Register([FromBody] RegisterDTO registerDto, CancellationToken cancellationToken)
         {
             var validationResult = await _registerValidator.ValidateAsync(registerDto, cancellationToken);
             if (!validationResult.IsValid)
+            {
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
+            }
 
             var result = await _authService.RegistrarAsync(registerDto, cancellationToken);
             
             if (result.IsFailure)
-                return BadRequest(new MessageResponseDTO(result.Error.Description));
+                return HandleFailure(result);
 
             return Ok(new MessageResponseDTO("Usuário cadastrado com sucesso."));
         }
 
         [HttpPost("login")]
         [EnableRateLimiting("LoginRateLimit")]
+        [Tags("1. Acesso e Registro")]
         public async Task<IActionResult> Login([FromBody] LoginDTO loginDto, CancellationToken cancellationToken)
         {
             var validationResult = await _loginValidator.ValidateAsync(loginDto, cancellationToken);
@@ -80,18 +84,7 @@ namespace ApiAutenticacao.Controllers
             var result = await _authService.LoginAsync(loginDto, cancellationToken);
 
             if (result.IsFailure)
-            {
-                if (result.Error == AuthErrors.AccountLocked)
-                    return StatusCode(StatusCodes.Status403Forbidden, new MessageResponseDTO(result.Error.Description));
-
-                if (result.Error.Code == "EmailNotConfirmed")
-                    return StatusCode(StatusCodes.Status403Forbidden, new MessageResponseDTO(result.Error.Description));
-
-                if (result.Error == AuthErrors.InvalidCredentials)
-                    return Unauthorized(new MessageResponseDTO(result.Error.Description));
-
-                return BadRequest(new MessageResponseDTO(result.Error.Description));
-            }
+                return HandleFailure(result);
 
             var (jwt, refreshToken) = result.Value;
             SetTokenCookies(jwt, refreshToken);
@@ -101,6 +94,7 @@ namespace ApiAutenticacao.Controllers
 
         [HttpPost("confirm-email")]
         [EnableRateLimiting("LoginRateLimit")]
+        [Tags("2. Confirmação e Recuperação")]
         public async Task<IActionResult> ConfirmEmail([FromBody] ConfirmEmailDTO confirmDto, CancellationToken cancellationToken)
         {
             var validationResult = await _confirmEmailValidator.ValidateAsync(confirmDto, cancellationToken);
@@ -110,13 +104,14 @@ namespace ApiAutenticacao.Controllers
             var result = await _authService.ConfirmarEmailAsync(confirmDto, cancellationToken);
 
             if (result.IsFailure)
-                return BadRequest(new MessageResponseDTO(result.Error.Description));
+                return HandleFailure(result);
 
             return Ok(new MessageResponseDTO("E-mail confirmado com sucesso. Você já pode fazer login no sistema."));
         }
 
         [HttpPost("resend-confirmation")]
         [EnableRateLimiting("LoginRateLimit")]
+        [Tags("2. Confirmação e Recuperação")]
         public async Task<IActionResult> ResendConfirmation([FromBody] ResendConfirmationDTO request, CancellationToken cancellationToken)
         {
             var validationResult = await _resendConfirmationValidator.ValidateAsync(request, cancellationToken);
@@ -126,26 +121,31 @@ namespace ApiAutenticacao.Controllers
             var result = await _authService.ReenviarCodigoConfirmacaoAsync(request, cancellationToken);
 
             if (result.IsFailure)
-                return BadRequest(new MessageResponseDTO(result.Error.Description));
+                return HandleFailure(result);
 
             return Ok(new MessageResponseDTO("Um novo código foi gerado e enviado para o seu e-mail."));
         }
 
         [HttpPost("forgot-password")]
         [EnableRateLimiting("LoginRateLimit")]
+        [Tags("2. Confirmação e Recuperação")]
         public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDTO dto, CancellationToken cancellationToken)
         {
             var validationResult = await _forgotPasswordValidator.ValidateAsync(dto, cancellationToken);
             if (!validationResult.IsValid)
                 return BadRequest(validationResult.Errors.Select(e => e.ErrorMessage));
 
-            await _authService.SolicitarRecuperacaoSenhaAsync(dto.Email, cancellationToken);
+            var result = await _authService.SolicitarRecuperacaoSenhaAsync(dto.Email, cancellationToken);
+
+            if (result.IsFailure)
+                return HandleFailure(result);
             
             return Ok(new MessageResponseDTO("Se o e-mail existir em nosso sistema, um link de recuperação será enviado."));
         }
 
         [HttpPost("reset-password")]
         [EnableRateLimiting("LoginRateLimit")]
+        [Tags("2. Confirmação e Recuperação")]
         public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDTO resetDto, CancellationToken cancellationToken)
         {
             var validationResult = await _resetPasswordValidator.ValidateAsync(resetDto, cancellationToken);
@@ -155,12 +155,13 @@ namespace ApiAutenticacao.Controllers
             var result = await _authService.RedefinirSenhaAsync(resetDto, cancellationToken);
 
             if (result.IsFailure)
-                return BadRequest(new MessageResponseDTO("Token inválido ou expirado. Solicite uma nova recuperação."));
+                return HandleFailure(result);
 
             return Ok(new MessageResponseDTO("Senha redefinida com sucesso. Todas as sessões antigas foram desconectadas."));
         }
 
         [HttpPost("refresh")]
+        [Tags("1. Acesso e Registro")]
         public async Task<IActionResult> Refresh(CancellationToken cancellationToken)
         {
             var refreshTokenAntigo = Request.Cookies["refreshToken"];
@@ -171,12 +172,8 @@ namespace ApiAutenticacao.Controllers
             var result = await _authService.RenovarTokenAsync(refreshTokenAntigo, cancellationToken);
 
             if (result.IsFailure)
-            {
-                _logger.LogWarning("Tentativa de refresh token falhou: {Erro}", result.Error.Description);
-                ClearTokenCookies();
-                return Unauthorized(new MessageResponseDTO(result.Error.Description));
-            }
-
+                return HandleFailure(result);
+   
             var (novoJwt, novoRefreshToken) = result.Value;
             SetTokenCookies(novoJwt, novoRefreshToken);
 
@@ -184,6 +181,7 @@ namespace ApiAutenticacao.Controllers
         }
 
         [HttpPost("logout")]
+        [Tags("1. Acesso e Registro")]
         public async Task<IActionResult> Logout(CancellationToken cancellationToken)
         {
             var refreshToken = Request.Cookies["refreshToken"];
@@ -191,10 +189,8 @@ namespace ApiAutenticacao.Controllers
             if (!string.IsNullOrEmpty(refreshToken))
             {
                 var result = await _authService.InvalidarRefreshTokenAsync(refreshToken, cancellationToken);
-                if (result.IsFailure)
-                {
-                    _logger.LogWarning("Falha ao invalidar token no banco: {Erro}", result.Error.Description);
-                }
+              if (result.IsFailure)
+                return HandleFailure(result);
             }
 
             ClearTokenCookies();
@@ -203,6 +199,7 @@ namespace ApiAutenticacao.Controllers
 
         [Authorize]
         [HttpPost("logout-all")]
+        [Tags("1. Acesso e Registro")]
         public async Task<IActionResult> LogoutAll(CancellationToken cancellationToken)
         {
             var email = User.FindFirst(ClaimTypes.Email)?.Value;
@@ -212,8 +209,8 @@ namespace ApiAutenticacao.Controllers
 
             var result = await _authService.LogoutCascataAsync(email, cancellationToken);
 
-            if (result.IsFailure)
-                return BadRequest(new MessageResponseDTO(result.Error.Description));
+                if (result.IsFailure)
+                    return HandleFailure(result);
 
             ClearTokenCookies();
             return Ok(new MessageResponseDTO("Você foi desconectado de todos os dispositivos com sucesso!"));
@@ -221,6 +218,7 @@ namespace ApiAutenticacao.Controllers
 
         [Authorize]
         [HttpPost("change-password")]
+        [Tags("3. Gestão de Perfil")]
         public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDTO dto, CancellationToken cancellationToken)
         {
             var validationResult = await _changePasswordValidator.ValidateAsync(dto, cancellationToken);
@@ -235,7 +233,7 @@ namespace ApiAutenticacao.Controllers
             var result = await _authService.AlterarSenhaAsync(email, dto, cancellationToken);
 
             if (result.IsFailure)
-                return BadRequest(new MessageResponseDTO(result.Error.Description));
+                return HandleFailure(result);
 
             ClearTokenCookies();
             
@@ -244,6 +242,7 @@ namespace ApiAutenticacao.Controllers
 
         [Authorize(Roles = "Admin")]
         [HttpPost("promover/email")]
+        [Tags("4. Administração")]
         public async Task<IActionResult> Promover([FromBody] PromoverDTO dto, CancellationToken cancellationToken)
         {
             var validationResult = await _promoverValidator.ValidateAsync(dto, cancellationToken);
@@ -253,18 +252,14 @@ namespace ApiAutenticacao.Controllers
             var result = await _authService.PromoverParaAdminAsync(dto.Email, cancellationToken);
 
             if (result.IsFailure)
-            {
-                if (result.Error == AuthErrors.UserNotFound)
-                    return NotFound(new MessageResponseDTO(result.Error.Description));
-
-                return BadRequest(new MessageResponseDTO(result.Error.Description));
-            }
+                return HandleFailure(result);
 
             return Ok(new MessageResponseDTO($"O usuário {dto.Email} foi promovido."));
         }
 
         [Authorize]
         [HttpDelete("delete-account")]
+        [Tags("3. Gestão de Perfil")]
         public async Task<IActionResult> DeleteAccount(CancellationToken cancellationToken)
         {
             var email = User.FindFirst(ClaimTypes.Email)?.Value;
@@ -275,7 +270,7 @@ namespace ApiAutenticacao.Controllers
             var result = await _authService.DeletarContaAsync(email, cancellationToken);
 
             if (result.IsFailure)
-                return BadRequest(new MessageResponseDTO(result.Error.Description));
+                return HandleFailure(result);
 
             ClearTokenCookies();
             
@@ -284,6 +279,7 @@ namespace ApiAutenticacao.Controllers
 
         [Authorize]
         [HttpGet("perfil")]
+        [Tags("3. Gestão de Perfil")]
         public async Task<IActionResult> MeuPerfil(CancellationToken cancellationToken)
         {
             var emailUser = User.FindFirst(ClaimTypes.Email)?.Value;
@@ -296,17 +292,27 @@ namespace ApiAutenticacao.Controllers
             if (result.IsFailure)
             {
                 if (result.Error == AuthErrors.UserNotFound)
-                {
                     ClearTokenCookies();
-                    return NotFound(new MessageResponseDTO(result.Error.Description));
-                }
-                return BadRequest(new MessageResponseDTO(result.Error.Description));
+                
+                return HandleFailure(result);
             }
 
             return Ok(result.Value);
         }
 
+        private IActionResult HandleFailure(Result result)
+        {
+            var response = new MessageResponseDTO(result.Error.Description);
 
+            return result.Error.Type switch
+            {
+                ErrorType.NotFound => NotFound(response),
+                ErrorType.Conflict => Conflict(response),
+                ErrorType.Unauthorized => Unauthorized(response),
+                ErrorType.Forbidden => StatusCode(StatusCodes.Status403Forbidden, response),
+                _ => BadRequest(response)
+            };
+        }
 
         private void SetTokenCookies(string jwt, string refreshToken)
         {

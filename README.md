@@ -1,111 +1,259 @@
-```markdown
-# 🛡️ API de Autenticação Enterprise (.NET 10)
+# API de Autenticação Enterprise
 
-Uma API RESTful desenvolvida em **C# (.NET 10)** focada em **Segurança da Informação** e **Arquitetura Limpa**. Este projeto não é apenas um CRUD de utilizadores, mas sim uma implementação de padrões de mercado para proteção de rotas, mitigação de ataques web (XSS, Força Bruta) e gestão segura de sessões.
+API RESTful desenvolvida em .NET 10 para autenticação e autorização de usuários com foco em segurança, boas práticas e arquitetura limpa. O projeto foi pensado como uma solução de referência para autenticação empresarial, com JWT, refresh tokens, cookies HttpOnly, recuperação de senha, confirmação de e-mail, limite de requisições e controle de acesso por roles.
 
-## ✨ Principais Funcionalidades & Segurança
+## Visão geral
 
-* **Autenticação Stateless (JWT):** Geração de Access Tokens de curta duração (15 minutos) para minimizar a janela de vulnerabilidade.
-* **Rotação de Chaves (Refresh Tokens):** Implementação de Refresh Tokens opacos (com duração de 7 dias) guardados na base de dados para renovar a sessão silenciosamente, garantindo segurança sem prejudicar a experiência do utilizador.
-* **Segurança de Transporte (HttpOnly Cookies):** Os tokens **não** são devolvidos no corpo da resposta (JSON) nem armazenados no `localStorage`. Viajam exclusivamente em cookies `HttpOnly` e `Secure`, bloqueando a interceção por scripts maliciosos (mitigação de XSS).
-* **Invalidação server-side:** Logout, troca de senha, exclusão de conta e logout global alteram o `SecurityStamp`; a API valida esse valor a cada requisição e rejeita JWTs revogados.
-* **Defesa de Infraestrutura (Rate Limiting):** Escudo anti-robôs configurado nativamente para rotas sensíveis (limite de 5 pedidos por IP a cada minuto), reduzindo ataques de força bruta.
-* **Controlo de Acesso (RBAC):** Autorização baseada em cargos (Roles), separando permissões de utilizadores comuns e Administradores.
-* **Proteção de Dados Sensíveis:** Encriptação irreversível de palavras-passe utilizando o algoritmo **BCrypt**.
+Essa API oferece um fluxo completo de autenticação e gerenciamento de usuários, incluindo:
 
-## 🛠️ Tecnologias Utilizadas
+- Cadastro de usuários
+- Confirmação de e-mail
+- Login com JWT e refresh token
+- Cookies HttpOnly para armazenamento seguro de tokens
+- Recuperação de senha
+- Logout e logout em todos os dispositivos
+- Alteração de senha
+- Proteção de endpoints com autorização por roles
+- Promover usuário para administrador
+- Exclusão lógica de conta
+- Health check da aplicação
+- Rate limiting para rotas sensíveis
 
-* **Framework:** .NET 10 (ASP.NET Core Web API)
-* **Linguagem:** C# 13
-* **Base de Dados:** MySQL 8
-* **ORM:** Entity Framework Core
-* **Validações:** FluentValidation (Separação das regras de negócio dos DTOs)
-* **Testes Automatizados:** xUnit
-* **Documentação:** Swagger (OpenAPI)
+## Stack tecnológica
 
-## 🏗️ Arquitetura do Projeto
+- .NET 10
+- ASP.NET Core Web API
+- C#
+- Entity Framework Core
+- MySQL 8
+- JWT (Json Web Token)
+- FluentValidation
+- Swagger / OpenAPI
+- xUnit (testes)
+- BCrypt para hash de senhas
+- Docker / Docker Compose
 
-O projeto segue princípios de separação de responsabilidades (Separation of Concerns):
-- **Controllers:** Responsáveis apenas por receber pedidos HTTP, invocar o validador e devolver as respostas (HTTP Status Codes).
-- **Services (`AuthService`):** Contêm o "coração" da aplicação. Toda a lógica de encriptação, geração de chaves criptográficas complexas e regras de negócio estão isoladas aqui.
-- **DTOs (`Data Transfer Objects`):** Objetos que garantem que as entidades da base de dados (Models) nunca sejam expostas diretamente aos utilizadores.
-- **Tests (`ApiAutenticacao.Tests`):** Projeto isolado com testes de unidade (xUnit) que valida os fluxos de entrada autonomamente e previne a injeção de dados inválidos.
+## Estrutura do projeto
 
-## 🚀 Como Executar o Projeto Localmente
-
-### Pré-requisitos
-* [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) instalado.
-* Um editor de código (Visual Studio, VS Code ou Rider).
-
-### Passos
-1. Faça o clone deste repositório:
-   ```bash
-   git clone [https://github.com/SEU-USUARIO/ApiAutenticacao.git](https://github.com/SEU-USUARIO/ApiAutenticacao.git)
-
+```text
+ApiAutenticacao/
+├── Controllers/
+│   └── AuthController.cs
+├── Services/
+├── Repositories/
+├── Interfaces/
+├── Data/
+├── Models/
+├── DTOs/
+├── Validations/
+├── Middlewares/
+├── Common/
+├── Migrations/
+├── ApiAutenticacao.Tests/
+├── appsettings.json
+├── appsettings.Development.json
+├── Program.cs
+├── ApiAutenticacao.csproj
+├── docker-compose.yml
+├── dockerfile
+├── ApiAutenticacao.http
+├── README.md
+└── .gitignore
 ```
 
-2. Aceda à pasta do projeto:
+### Camadas principais
+
+- Controllers: expõem os endpoints HTTP
+- Services: implementam a lógica de negócio
+- Repositories: acesso e persistência com banco de dados
+- DTOs: transportam dados sem expor entidades diretamente
+- Validations: validações com FluentValidation
+- Data: contexto do Entity Framework e configurações do banco
+- Models: entidades do domínio
+- Middlewares: interceptam e tratam erros ou comportamentos globais
+
+## Requisitos
+
+Antes de rodar o projeto, verifique se você tem instalado:
+
+- .NET 10 SDK
+- MySQL 8 ou Docker Compose
+- Git
+- Editor de código como VS Code, Rider ou Visual Studio
+
+## Como executar
+
+### Opção 1: usando Docker Compose (recomendado)
+
+Este projeto já contém configuração para subir a API e o banco com Docker.
+
 ```bash
+git clone https://github.com/GusttavoFerreiraEng/ApiAutenticacao.git
 cd ApiAutenticacao
-
+docker compose up --build
 ```
 
+Após subir os containers:
 
+- API: http://localhost:8080
+- Swagger: http://localhost:8080/swagger
+- MySQL: localhost:3306
+
+### Opção 2: rodando localmente sem Docker
+
+1. Configure a conexão com o banco em `appsettings.Development.json` ou `appsettings.json`
+2. Crie o banco MySQL
 3. Restaure os pacotes NuGet:
+
 ```bash
 dotnet restore
-
 ```
 
+4. Aplique as migrações:
 
-4. Crie a base de dados e aplique as migrações do Entity Framework:
 ```bash
 dotnet ef database update
-
 ```
 
+5. Inicie a aplicação:
 
-5. Inicie a API:
 ```bash
 dotnet run
-
 ```
 
+Se estiver em ambiente de desenvolvimento, a aplicação habilita o Swagger automaticamente.
 
-6. Abra o navegador no endereço indicado na consola (geralmente `http://localhost:5019/swagger`) para explorar os *endpoints* interativamente através do Swagger.
+## Configuração dos ambientes
 
-## 🧪 Como Executar os Testes Automatizados
+Os arquivos de configuração principais são:
 
-O projeto conta com uma suíte de testes de unidade focada na validação da entrada de dados. Para correr os testes, execute o seguinte comando na raiz do projeto:
+- `appsettings.json`: configurações padrão
+- `appsettings.Development.json`: ambiente local de desenvolvimento
+
+Exemplo de variáveis esperadas:
+
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=localhost;Database=ApiAutenticacao;Uid=root;Pwd=sua_senha;"
+  },
+  "jwt": {
+    "Key": "sua-chave-secreta",
+    "Issuer": "ApiAutenticacao.Local",
+    "Audience": "MeuFrontendApp"
+  },
+  "FrontendUrl": "http://localhost:3000",
+  "SMTP_USER": "seu_email@gmail.com",
+  "SMTP_PASS": "sua_senha_app",
+  "SMTP_HOST": "smtp.gmail.com",
+  "SMTP_PORT": "587"
+}
+```
+
+Observação: a API usa `DotNetEnv` e também pode ser ajustada para leitura de variáveis de ambiente conforme necessário.
+
+## Endpoints principais
+
+Todos os endpoints usam o prefixo:
+
+```text
+/api/v1/Auth
+```
+
+### Autenticação e registro
+
+- `POST /api/v1/Auth/register` - Cadastra um novo usuário
+- `POST /api/v1/Auth/login` - Realiza login e cria cookies de sessão
+- `POST /api/v1/Auth/refresh` - Renova tokens
+- `POST /api/v1/Auth/logout` - Encerra a sessão atual
+- `POST /api/v1/Auth/logout-all` - Desconecta todas as sessões do usuário
+
+### Confirmação e recuperação
+
+- `POST /api/v1/Auth/confirm-email` - Confirma o e-mail do usuário
+- `POST /api/v1/Auth/resend-confirmation` - Reenvia o código de confirmação
+- `POST /api/v1/Auth/forgot-password` - Solicita recuperação de senha
+- `POST /api/v1/Auth/reset-password` - Redefine a senha
+
+### Perfil e segurança
+
+- `POST /api/v1/Auth/change-password` - Troca a senha autenticada
+- `GET /api/v1/Auth/perfil` - Retorna o perfil do usuário autenticado
+- `DELETE /api/v1/Auth/delete-account` - Exclui a conta autenticada
+
+### Administração
+
+- `POST /api/v1/Auth/promover/email` - Promove um usuário para administrador
+
+### Saúde da aplicação
+
+- `GET /health` - Verifica disponibilidade da API
+
+## Segurança implementada
+
+A API foi desenvolvida com foco em proteção real de autenticação. Entre as medidas aplicadas:
+
+- JWT com validade curta
+- Refresh token para renovação segura de sessão
+- Cookies HttpOnly e Secure
+- Rotação de tokens
+- Blacklist e invalidação de sessões
+- SecurityStamp para revogar tokens antigos
+- Criptografia de senhas com BCrypt
+- Rate limiting para login e rotas sensíveis
+- CORS configurado para frontend
+- Headers de segurança como X-Frame-Options, Referrer-Policy e CSP
+- Validação de entrada com FluentValidation
+
+## Testes
+
+Para rodar a suíte de testes do projeto:
+
+```bash
+dotnet test
+```
+
+Se quiser executar apenas o projeto de testes:
 
 ```bash
 dotnet test ApiAutenticacao.Tests
-
 ```
 
-## 🗺️ Endpoints da API
+## Observações importantes
 
-Todas as rotas abaixo usam o prefixo `/api/v1/auth`.
+- O projeto usa MySQL como banco principal.
+- A autenticação depende de JWT e cookies, então o frontend precisa aceitar cookies com credenciais.
+- Em ambiente de produção, configure corretamente as chaves JWT, SMTP e strings de conexão.
+- Não versionar segredos em repositório público. Use variáveis de ambiente ou arquivos de configuração locais seguros.
 
-* `POST /register` - Cria a conta e envia o código de confirmação.
-* `POST /login` - Autentica e grava os cookies HttpOnly de sessão.
-* `POST /confirm-email` - Confirma o e-mail com o código recebido.
-* `POST /resend-confirmation` - Gera e envia outro código.
-* `POST /forgot-password` - Gera e envia o token de recuperação.
-* `POST /reset-password` - Redefine a senha e encerra as sessões anteriores.
-* `POST /refresh` - Faz a rotação do refresh token.
-* `POST /logout` - Encerra a sessão atual.
-* `POST /logout-all` - Encerra todas as sessões autenticadas.
-* `POST /change-password` - Altera a senha e encerra as sessões anteriores.
-* `POST /promover/email` - Promove um usuário a Admin; exige a role `Admin`.
-* `DELETE /delete-account` - Exclui logicamente a conta autenticada.
-* `GET /perfil` - Retorna o perfil público autenticado.
-* `GET /health` - Verifica a disponibilidade da API e do banco.
+## Dica para o GitHub
 
----
+Para deixar o repositório mais profissional no GitHub, você pode complementar esse README com:
 
-*Desenvolvido como projeto de estudo avançado de segurança e arquitetura Back-end.*
+- imagem do fluxo de autenticação
+- arquitetura em diagramas
+- exemplos de payloads de requisição
+- vídeos ou GIFs do Swagger em uso
+- badges (dotnet, license, docker, build status)
 
-```
+## Licença
 
-```
+Este projeto é de uso acadêmico e pessoal, a menos que você defina uma licença específica para o repositório.
+
+## Conclusão
+
+Esse README foi pensado para que qualquer desenvolvedor consiga entender rapidamente:
+
+- para que a API serve
+- como rodar em ambiente local
+- quais tecnologias ela usa
+- como os endpoints funcionam
+- como ela se protege em nível de autenticação e segurança
+
+Se quiser, posso também criar uma segunda versão mais “premium” para GitHub, com:
+
+- badges
+- screenshots do Swagger
+- seção de exemplos de requisições
+- versão mais visual e profissional
+- README em inglês ou em português com estilo de portfolio

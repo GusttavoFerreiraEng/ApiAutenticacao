@@ -8,10 +8,12 @@ namespace ApiAutenticacao.Services
     public class EmailService : IEmailService
     {
         private readonly IConfiguration _configuration;
+        private readonly IWebHostEnvironment _environment;
 
-        public EmailService(IConfiguration configuration)
+        public EmailService(IConfiguration configuration, IWebHostEnvironment environment)
         {
             _configuration = configuration;
+            _environment = environment;
         }
 
         public async Task EnviarEmailAsync(string paraEmail, string assunto, string corpo)
@@ -27,9 +29,13 @@ namespace ApiAutenticacao.Services
             message.Subject = assunto;
             message.Body = new TextPart("plain") { Text = corpo };
 
+            var developmentSmtp = _environment.IsDevelopment()
+                && _configuration.GetValue<bool>("SMTP_DEV_MODE");
             using var client = new SmtpClient();
-            await client.ConnectAsync(host, port, SecureSocketOptions.StartTls);
-            await client.AuthenticateAsync(emailUser, emailPass);
+            await client.ConnectAsync(host, port,
+                developmentSmtp ? SecureSocketOptions.None : SecureSocketOptions.StartTls);
+            if (!developmentSmtp)
+                await client.AuthenticateAsync(emailUser, emailPass);
             await client.SendAsync(message);
             await client.DisconnectAsync(true);
         }

@@ -18,13 +18,14 @@ using ApiAutenticacao.Data;
 using ApiAutenticacao.Middlewares;
 using ApiAutenticacao.Repositories;
 using Asp.Versioning;
-using DotNetEnv;
+using ApiAutenticacao.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 
 //Console.WriteLine("teste 1");
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddJsonConsole(options => { options.IncludeScopes = true; options.TimestampFormat = "yyyy-MM-ddTHH:mm:ssZ"; options.UseUtcTimestamp = true; });
 
-DotNetEnv.Env.Load();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -44,6 +45,12 @@ builder.Services.AddProblemDetails();
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<SessionService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddGoogleAuthentication();
+var keyPath = builder.Configuration["DataProtection:KeyPath"];
+if (!string.IsNullOrWhiteSpace(keyPath))
+    builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath)).SetApplicationName("PreventionFinance");
 builder.Services.AddScoped<IEmailService, EmailService>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<RegisterDTOValidator>();
@@ -51,10 +58,11 @@ builder.Services.AddScoped<IValidator<ConfirmEmailDTO>, ConfirmEmailDTOValidator
 builder.Services.AddScoped<IValidator<ResendConfirmationDTO>, ResendConfirmationDTOValidator>();
 builder.Services.AddScoped<IValidator<ForgotPasswordDTO>, ForgotPasswordDTOValidator>();
 
-var connectionString = builder.Configuration["ConnectionStrings:DefaultConnection"] ?? throw new InvalidOperationException("Connection string não configurada.");
-builder.Services.AddDbContext<AppDbContext>(options =>
+builder.Services.AddDbContext<AppDbContext>((services, options) =>
 {
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
+    var connectionString = services.GetRequiredService<IConfiguration>()["ConnectionStrings:DefaultConnection"]
+        ?? throw new InvalidOperationException("Connection string não configurada.");
+    options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 0)));
 });
 
 var frontEndUrl = builder.Configuration["FrontendUrl"];
@@ -72,18 +80,20 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddHostedService<TokenCleanupService>();
 
-var jwtKey = builder.Configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
-var jwtIssuer = builder.Configuration["jwt:Issuer"];
-var jwtAudience = builder.Configuration["jwt:Audience"];
-
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
 })
-.AddJwtBearer(options =>
+.AddJwtBearer();
+
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+.Configure<IConfiguration, IWebHostEnvironment>((options, configuration, environment) =>
 {
-    options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+    var jwtKey = configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
+    var jwtIssuer = configuration["jwt:Issuer"];
+    var jwtAudience = configuration["jwt:Audience"];
+    options.RequireHttpsMetadata = !environment.IsDevelopment();
     options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -100,7 +110,7 @@ builder.Services.AddAuthentication(options =>
     {
         OnMessageReceived = context =>
         {
-            if (string.IsNullOrEmpty(context.Token))
+            if (!context.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
                 context.Token = context.Request.Cookies["jwt"];
             return Task.CompletedTask;
         },
@@ -109,18 +119,19 @@ builder.Services.AddAuthentication(options =>
             var userIdClaim = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub)
                 ?? context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
             var stamp = context.Principal?.FindFirstValue("SecurityStamp");
-            if (!long.TryParse(userIdClaim, out var userId) || string.IsNullOrWhiteSpace(stamp))
+            var sid = context.Principal?.FindFirstValue("sid") ?? context.Principal?.FindFirstValue(ClaimTypes.Sid);
+            if (!long.TryParse(userIdClaim, out var userId) || string.IsNullOrWhiteSpace(stamp) || string.IsNullOrWhiteSpace(sid))
             {
                 context.Fail("Token inválido.");
                 return;
             }
 
             var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
-            var currentStamp = await db.Users
-                .Where(user => user.Id == userId)
-                .Select(user => user.SecurityStamp)
-                .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
-            if (currentStamp != stamp)
+            var now = context.HttpContext.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
+            var active = await db.RefreshTokens.AnyAsync(session => session.UserId == userId &&
+                session.SessionId == sid && session.ExpiryTime > now && session.User.SecurityStamp == stamp,
+                context.HttpContext.RequestAborted);
+            if (!active)
                 context.Fail("Token revogado.");
         }
     };
@@ -155,11 +166,11 @@ builder.Services.AddRateLimiter(options =>
 
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            partitionKey: httpContext.User.FindFirst("sub")?.Value ?? httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: partition => new FixedWindowRateLimiterOptions
             {
                 AutoReplenishment = true,
-                PermitLimit = 100,
+                PermitLimit = builder.Configuration.GetValue<int>("RateLimits:GlobalPerMinute", 100),
                 QueueLimit = 0,
                 Window = TimeSpan.FromMinutes(1)
             }));
@@ -169,10 +180,16 @@ builder.Services.AddRateLimiter(options =>
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: partition => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 5,
+                PermitLimit = builder.Configuration.GetValue<int>("RateLimits:LoginPerMinute", 5),
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0
             }));
+    options.AddPolicy("ExternalLoginRateLimit", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
+        { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("ExternalLinkRateLimit", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
+        { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
 });
 
 var app = builder.Build();
@@ -180,9 +197,11 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    if (dbContext.Database.IsRelational())
+    scope.ServiceProvider.GetRequiredService<AuthSettings>().Validate();
+    if (args.Contains("--migrate")) { await dbContext.Database.MigrateAsync(); return; }
+    if (dbContext.Database.IsRelational() && builder.Configuration.GetValue<bool>("Database:AutoMigrate", !app.Environment.IsProduction()))
         dbContext.Database.Migrate();
-    else
+    else if (!dbContext.Database.IsRelational())
         dbContext.Database.EnsureCreated();
 }
 
@@ -221,11 +240,27 @@ else
 }
 
 app.UseCors("CorsPolicy");
+app.Use(async (context, next) =>
+{
+    if (TrustedProxy.TryClientIp(context.Request, builder.Configuration["Proxy:SharedKey"], out var clientIp))
+        context.Connection.RemoteIpAddress = clientIp;
+    await next();
+});
 app.UseAuthentication();
-app.UseAuthorization();
 app.UseRateLimiter();
+app.Use(async (context, next) =>
+{
+    var action = context.GetEndpoint()?.Metadata.GetMetadata<Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor>();
+    var legacy = new[] { "Login", "Register", "ConfirmEmail", "ResendConfirmation", "ForgotPassword", "ResetPassword", "ChangePassword" };
+    // Metadados cobrem versões equivalentes (v1/v1.0), caixa e barra final da rota.
+    if (!context.RequestServices.GetRequiredService<AuthSettings>().LocalEnabled && action?.ControllerName == "Auth" &&
+        legacy.Contains(action.ActionName, StringComparer.OrdinalIgnoreCase))
+    { context.Response.StatusCode = 410; await context.Response.WriteAsJsonAsync(new { error = "Acesso por senha encerrado. Entre com Google." }); return; }
+    await next();
+});
+app.UseAuthorization();
 
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health").DisableRateLimiting();
 app.MapControllers();
 
 var endpoints = app.Services.GetRequiredService<EndpointDataSource>();

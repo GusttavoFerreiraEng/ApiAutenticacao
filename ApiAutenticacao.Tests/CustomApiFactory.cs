@@ -7,6 +7,7 @@ using ApiAutenticacao.Data;
 using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.Services;
 using System.Linq;
+using Microsoft.Extensions.Configuration;
 
 namespace ApiAutenticacao.Tests
 {
@@ -14,6 +15,13 @@ namespace ApiAutenticacao.Tests
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["jwt:Key"] = SessionApiFactory.SigningKey,
+                ["jwt:Issuer"] = "registration-tests",
+                ["jwt:Audience"] = "registration-tests"
+            }));
             builder.ConfigureServices(services =>
             {
                 var descriptorsToRemove = services

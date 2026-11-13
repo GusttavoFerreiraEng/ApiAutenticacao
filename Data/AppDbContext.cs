@@ -11,6 +11,7 @@ namespace ApiAutenticacao.Data
 
         public DbSet<User> Users { get; set; }
         public DbSet<RefreshToken> RefreshTokens { get; set; }
+        public DbSet<ExternalLogin> ExternalLogins { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
 
@@ -30,8 +31,7 @@ namespace ApiAutenticacao.Data
 
                 entity.Property(u => u.PasswordHash)
                       .HasMaxLength(60)
-                      .IsFixedLength()
-                      .IsRequired();
+                      .IsFixedLength();
 
                 entity.Property(u => u.Role)
                       .HasMaxLength(20)
@@ -59,6 +59,8 @@ namespace ApiAutenticacao.Data
                       .IsUnique();
 
                 entity.HasIndex(rt => rt.ExpiryTime);
+                entity.Property(rt => rt.SessionId).HasMaxLength(32);
+                entity.HasIndex(rt => rt.SessionId).IsUnique();
 
                 entity.Property(rt => rt.PreviousTokenHash).HasMaxLength(100);
 
@@ -68,6 +70,15 @@ namespace ApiAutenticacao.Data
                       .OnDelete(DeleteBehavior.Cascade);
 
                 entity.HasQueryFilter(rt => rt.User.DeletedAt == null);
+            });
+            builder.Entity<ExternalLogin>(entity =>
+            {
+                entity.ToTable("ExternalLogins"); entity.HasKey(x => x.Id);
+                entity.Property(x => x.Provider).HasMaxLength(32).IsRequired();
+                entity.Property(x => x.Subject).HasMaxLength(255).UseCollation("utf8mb4_bin").IsRequired();
+                entity.HasIndex(x => new { x.Provider, x.Subject }).IsUnique();
+                entity.HasIndex(x => new { x.UserId, x.Provider }).IsUnique();
+                entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
             });
         }
 

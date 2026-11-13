@@ -12,4 +12,5 @@ obj/
 
 # Ignora o banco de dados em arquivo (se tiver usando SQLite em outro momento)
 *.db
-*.sqlite
+*.sqlite.env*
+.git

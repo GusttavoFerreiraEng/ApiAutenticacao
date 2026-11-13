@@ -20,6 +20,7 @@ namespace ApiAutenticacao.Controllers
     public class AuthController : ControllerBase
     {
         private readonly IAuthService _authService;
+        private readonly SessionService _sessions;
         private readonly IValidator<RegisterDTO> _registerValidator;
         private readonly IValidator<LoginDTO> _loginValidator;
         private readonly IValidator<ConfirmEmailDTO> _confirmEmailValidator;
@@ -32,6 +33,7 @@ namespace ApiAutenticacao.Controllers
 
         public AuthController(
             IAuthService authService,
+            SessionService sessions,
             IValidator<RegisterDTO> registerValidator,
             IValidator<LoginDTO> loginValidator,
             IValidator<ConfirmEmailDTO> confirmEmailValidator,
@@ -43,6 +45,7 @@ namespace ApiAutenticacao.Controllers
             ILogger<AuthController> logger)
         {
             _authService = authService;
+            _sessions = sessions;
             _registerValidator = registerValidator;
             _loginValidator = loginValidator;
             _confirmEmailValidator = confirmEmailValidator;
@@ -137,10 +140,10 @@ namespace ApiAutenticacao.Controllers
 
             var result = await _authService.SolicitarRecuperacaoSenhaAsync(dto.Email, cancellationToken);
 
-            if (result.IsFailure)
+            if (result.IsFailure && result.Error != AuthErrors.UserNotFound)
                 return HandleFailure(result);
-            
-            return Ok(new MessageResponseDTO("Se o e-mail existir em nosso sistema, um link de recuperação será enviado."));
+
+            return Ok(new MessageResponseDTO("Se o e-mail existir em nosso sistema, as instruções de recuperação serão enviadas."));
         }
 
         [HttpPost("reset-password")]
@@ -186,12 +189,10 @@ namespace ApiAutenticacao.Controllers
         {
             var refreshToken = Request.Cookies["refreshToken"];
 
-            if (!string.IsNullOrEmpty(refreshToken))
-            {
-                var result = await _authService.InvalidarRefreshTokenAsync(refreshToken, cancellationToken);
-              if (result.IsFailure)
-                return HandleFailure(result);
-            }
+            var subject = User.FindFirst("sub")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var sessionId = User.FindFirst("sid")?.Value ?? User.FindFirst(ClaimTypes.Sid)?.Value;
+            long? userId = long.TryParse(subject, out var parsedId) ? parsedId : null;
+            await _sessions.RevokeAsync(refreshToken, sessionId, userId, cancellationToken);
 
             ClearTokenCookies();
             return Ok(new MessageResponseDTO("Você saiu do sistema!"));

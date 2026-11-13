@@ -1,8 +1,5 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using System.Text;
 using System.Security.Cryptography;
-using Microsoft.IdentityModel.Tokens;
 using Models;
 using ApiAutenticacao.Interfaces;
 using ApiAutenticacao.common;
@@ -13,18 +10,16 @@ namespace ApiAutenticacao.Services
     public class AuthService : IAuthService
     {
         private readonly IUnitOfWork _uow;
-        private readonly IConfiguration _configuration;
         private readonly IEmailService _emailService;
         private readonly ILogger<AuthService> _logger;
-        private readonly string _jwtKey;
+        private readonly SessionService _sessions;
 
-        public AuthService(IUnitOfWork uow, IConfiguration configuration, IEmailService emailService, ILogger<AuthService> logger)
+        public AuthService(IUnitOfWork uow, IEmailService emailService, ILogger<AuthService> logger, SessionService sessions)
         {
             _uow = uow;
-            _configuration = configuration;
             _emailService = emailService;
             _logger = logger;
-            _jwtKey = _configuration["jwt:Key"] ?? throw new InvalidOperationException("Chave JWT não configurada.");
+            _sessions = sessions;
         }
 
         public async Task<Result> RegistrarAsync(RegisterDTO registerDto, CancellationToken cancellationToken = default)
@@ -45,7 +40,7 @@ namespace ApiAutenticacao.Services
                 PasswordHash = await Task.Run(() => BCrypt.Net.BCrypt.HashPassword(registerDto.Password, workFactor: 11)),
                 EmailConfirmed = false,
                 EmailConfirmationToken = tokenCode,
-                EmailConfirmationTokenExpires = DateTimeOffset.UtcNow.AddSeconds(60)
+                EmailConfirmationTokenExpires = DateTimeOffset.UtcNow.AddMinutes(10)
             };
 
             await _uow.Users.AddAsync(user, cancellationToken);
@@ -55,7 +50,7 @@ namespace ApiAutenticacao.Services
                 await _emailService.EnviarEmailAsync(
                     user.Email,
                     "Código de Confirmação",
-                    $"Seu código de confirmação é: {tokenCode}. Ele expira em 60 segundos."
+                    $"Seu código de confirmação é: {tokenCode}. Ele expira em 10 minutos."
                 );
                 _logger.LogInformation("Email de confirmação enviado com sucesso para: {Email}", user.Email);
             }
@@ -83,7 +78,7 @@ namespace ApiAutenticacao.Services
                 return Result<(string, string)>.Failure(AuthErrors.AccountLocked);
             }
 
-            if (!BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
+            if (user.PasswordHash == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
             {
                 user.AccessFailedCount++;
                 if (user.AccessFailedCount >= 5)
@@ -102,78 +97,28 @@ namespace ApiAutenticacao.Services
             if (!user.EmailConfirmed)
             {
                 _logger.LogWarning("Tentativa de login com email não confirmado: {Email}", loginDto.Email);
-                return Result<(string, string)>.Failure(new Error("EmailNotConfirmed", "Por favor, confirme seu e-mail antes de fazer login."));
+                return Result<(string, string)>.Failure(new Error("EmailNotConfirmed", "Por favor, confirme seu e-mail antes de fazer login.", ErrorType.Forbidden));
             }
 
             user.AccessFailedCount = 0;
             user.LockoutEnd = null;
 
-            var jwt = GerarJwt(user);
-            var refreshTokenRaw = GerarRefreshToken();
-
-            var novoToken = new RefreshToken
-            {
-                TokenHash = ComputeSha256Hash(refreshTokenRaw),
-                ExpiryTime = DateTimeOffset.UtcNow.AddDays(7)
-            };
-            
-            user.RefreshTokens.Add(novoToken);
+            var credentials = _sessions.Create(user);
             await _uow.CommitAsync(cancellationToken);
 
             _logger.LogInformation("Login bem-sucedido para: {Email}", loginDto.Email);
 
-            return Result<(string, string)>.Success((jwt, refreshTokenRaw));
+            return Result<(string, string)>.Success(credentials);
         }
 
         public async Task<Result<(string AccessToken, string RefreshToken)>> RenovarTokenAsync(string refreshTokenAntigo, CancellationToken cancellationToken = default)
         {
-            var providedHash = ComputeSha256Hash(refreshTokenAntigo);
-            
-            var user = await _uow.Users.GetByRefreshTokenHashAsync(providedHash, cancellationToken);
-
-            if (user == null)
-            {
-                return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
-            }
-
-            var tokenAtual = user.RefreshTokens.FirstOrDefault(rt => 
-                rt.TokenHash == providedHash || rt.PreviousTokenHash == providedHash);
-
-            if (tokenAtual == null || tokenAtual.ExpiryTime <= DateTimeOffset.UtcNow)
-            {
-                return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
-            }
-
-            var novoJwt = GerarJwt(user);
-            var novoRefreshTokenRaw = GerarRefreshToken();
-
-            tokenAtual.PreviousTokenHash = tokenAtual.TokenHash;
-            tokenAtual.PreviousTokenGraceExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
-            
-            tokenAtual.TokenHash = ComputeSha256Hash(novoRefreshTokenRaw);
-            tokenAtual.ExpiryTime = DateTimeOffset.UtcNow.AddDays(7);
-
-            await _uow.CommitAsync(cancellationToken);
-
-            return Result<(string, string)>.Success((novoJwt, novoRefreshTokenRaw));
+            return await _sessions.RefreshAsync(refreshTokenAntigo, cancellationToken);
         }
 
         public async Task<Result> InvalidarRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken = default)
         {
-            var hash = ComputeSha256Hash(refreshToken);
-            var user = await _uow.Users.GetByRefreshTokenHashAsync(hash, cancellationToken);
-
-            if (user != null)
-            {
-                var tokenParaRemover = user.RefreshTokens.FirstOrDefault(rt => rt.TokenHash == hash);
-                if (tokenParaRemover != null)
-                {
-                    user.RefreshTokens.Remove(tokenParaRemover);
-                    await _uow.CommitAsync(cancellationToken);
-                    _logger.LogInformation("Refresh token invalidado para usuário: {Email}", user.Email);
-                }
-            }
-
+            await _sessions.RevokeAsync(refreshToken, null, null, cancellationToken);
             return Result.Success();
         }
 
@@ -188,6 +133,7 @@ namespace ApiAutenticacao.Services
 
             user.Role = "Admin";
             user.SecurityStamp = Guid.NewGuid().ToString();
+            await _sessions.RevokeAllAsync(user.Id, cancellationToken);
             await _uow.CommitAsync(cancellationToken);
             
             _logger.LogCritical("AUDITORIA: Usuário promovido a Admin: {Email}", email);
@@ -205,6 +151,7 @@ namespace ApiAutenticacao.Services
                 Id = user.Id,
                 Email = user.Email,
                 Role = user.Role,
+                HasPassword = user.PasswordHash != null,
             };
 
             return Result<UserProfileResponseDTO?>.Success(profile);
@@ -219,7 +166,7 @@ namespace ApiAutenticacao.Services
 
             user.DeletedAt = DateTimeOffset.UtcNow;
             user.SecurityStamp = Guid.NewGuid().ToString();
-            user.RefreshTokens.Clear();
+            await _sessions.RevokeAllAsync(user.Id, cancellationToken);
 
             await _uow.CommitAsync(cancellationToken);
             
@@ -239,7 +186,7 @@ namespace ApiAutenticacao.Services
             var tokenBytes = RandomNumberGenerator.GetBytes(32);
             var token = Convert.ToBase64String(tokenBytes);
 
-            user.PasswordResetToken = token;
+            user.PasswordResetToken = ComputeSha256Hash(token);
             user.ResetTokenExpires = DateTimeOffset.UtcNow.AddHours(1);
 
             await _uow.CommitAsync(cancellationToken);
@@ -265,8 +212,10 @@ namespace ApiAutenticacao.Services
             var user = await _uow.Users.GetByEmailAsync(NormalizeEmail(resetDto.Email), cancellationToken);
              
             if (user == null || 
-                user.PasswordResetToken != resetDto.Token || 
-                user.ResetTokenExpires < DateTimeOffset.UtcNow)
+                user.PasswordResetToken == null ||
+                user.PasswordResetToken != ComputeSha256Hash(resetDto.Token) ||
+                !user.ResetTokenExpires.HasValue ||
+                user.ResetTokenExpires <= DateTimeOffset.UtcNow)
             {
                 _logger.LogWarning("Tentativa de redefinir senha com token inválido ou expirado: {Email}", resetDto.Email);
                 return Result.Failure(AuthErrors.InvalidToken);
@@ -276,7 +225,7 @@ namespace ApiAutenticacao.Services
             user.PasswordResetToken = null;
             user.ResetTokenExpires = null;
             user.SecurityStamp = Guid.NewGuid().ToString();
-            user.RefreshTokens.Clear();
+            await _sessions.RevokeAllAsync(user.Id, cancellationToken);
             user.AccessFailedCount = 0;
             user.LockoutEnd = null;
 
@@ -293,12 +242,12 @@ namespace ApiAutenticacao.Services
             if (user == null)
             return Result.Failure(AuthErrors.UserNotFound);
 
-            if (!BCrypt.Net.BCrypt.Verify(dto.SenhaAtual, user.PasswordHash))
+            if (user.PasswordHash == null || !BCrypt.Net.BCrypt.Verify(dto.SenhaAtual, user.PasswordHash))
             return Result.Failure(new Error("InvalidCurrentPassword", "A senha atual está incorreta."));
 
             user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NovaSenha, workFactor: 11);
             user.SecurityStamp = Guid.NewGuid().ToString();
-            user.RefreshTokens.Clear();
+            await _sessions.RevokeAllAsync(user.Id, cancellationToken);
 
             await _uow.CommitAsync(cancellationToken);
         
@@ -320,7 +269,7 @@ namespace ApiAutenticacao.Services
                 return Result.Failure(new Error("EmailAlreadyConfirmed", "E-mail já confirmado."));
             }
 
-            if (user.EmailConfirmationTokenExpires < DateTimeOffset.UtcNow)
+            if (!user.EmailConfirmationTokenExpires.HasValue || user.EmailConfirmationTokenExpires <= DateTimeOffset.UtcNow)
             {
                 return Result.Failure(new Error("TokenExpired", "Código expirado."));
             }
@@ -350,7 +299,7 @@ namespace ApiAutenticacao.Services
             var novoCodigo = (BitConverter.ToUInt32(tokenBytes, 0) % 900000 + 100000).ToString();
 
             user.EmailConfirmationToken = novoCodigo;
-            user.EmailConfirmationTokenExpires = DateTimeOffset.UtcNow.AddSeconds(60);
+            user.EmailConfirmationTokenExpires = DateTimeOffset.UtcNow.AddMinutes(10);
 
             await _uow.CommitAsync(cancellationToken);
 
@@ -359,7 +308,7 @@ namespace ApiAutenticacao.Services
                 await _emailService.EnviarEmailAsync(
                     user.Email,
                     "Seu Novo Código de Confirmação",
-                    $"Seu novo código é: {novoCodigo}. Ele expira em 60 segundos."
+                    $"Seu novo código é: {novoCodigo}. Ele expira em 10 minutos."
                 );
                 _logger.LogInformation("Código de confirmação reenviado para: {Email}", user.Email);
             }
@@ -378,7 +327,7 @@ namespace ApiAutenticacao.Services
     if (user == null)
         return Result.Failure(AuthErrors.UserNotFound);
 
-    user.RefreshTokens.Clear();
+    await _sessions.RevokeAllAsync(user.Id, cancellationToken);
     user.SecurityStamp = Guid.NewGuid().ToString();
 
     await _uow.CommitAsync(cancellationToken);
@@ -386,40 +335,6 @@ namespace ApiAutenticacao.Services
 
     return Result.Success();
 }
-
-        private string GerarJwt(User user)
-        {
-            var chaveBytes = Encoding.UTF8.GetBytes(_jwtKey);
-            var credenciais = new SigningCredentials(new SymmetricSecurityKey(chaveBytes), SecurityAlgorithms.HmacSha256);
-
-            var informacoes = new[]
-            {
-              new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-              new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-              new Claim(ClaimTypes.Email, user.Email),
-              new Claim(ClaimTypes.Role, user.Role),
-              new Claim("SecurityStamp", user.SecurityStamp)
-            };
-
-            var tokenObjeto = new JwtSecurityToken(
-                issuer: _configuration["jwt:Issuer"],
-                audience: _configuration["jwt:Audience"],
-                claims: informacoes,
-                expires: DateTime.UtcNow.AddMinutes(15), 
-                signingCredentials: credenciais
-                
-            );
-
-            return new JwtSecurityTokenHandler().WriteToken(tokenObjeto);
-        }
-
-        private string GerarRefreshToken()
-        {
-            var randomNumber = new byte[64];
-            using var rng = RandomNumberGenerator.Create();
-            rng.GetBytes(randomNumber);
-            return Convert.ToBase64String(randomNumber);
-        }
 
         private static string ComputeSha256Hash(string rawData)
         {

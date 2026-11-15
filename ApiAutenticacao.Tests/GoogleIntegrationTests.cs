@@ -60,13 +60,10 @@ public sealed class FakeGoogle : HttpMessageHandler
         return new(HttpStatusCode.OK) { Content = JsonContent.Create(new { access_token="test-only-access",token_type="Bearer",expires_in=300,id_token=record.Token }) };
     }
 }
-public sealed class GoogleIntegrationTests : IClassFixture<GoogleApiFactory>
+internal static class GoogleTestFlow
 {
-    private readonly GoogleApiFactory factory;
-    private readonly HttpClient client;
-    public GoogleIntegrationTests(GoogleApiFactory factory) { this.factory=factory;client=factory.CreateClient(new(){HandleCookies=false,AllowAutoRedirect=false}); }
-    private static string Cookies(HttpResponseMessage response) => response.Headers.TryGetValues("Set-Cookie",out var values) ? string.Join("; ",values.Select(v=>v.Split(';')[0])) : "";
-    private async Task<HttpResponseMessage> SignIn(string sub,string email,string? nonceOverride=null,bool verified=true)
+    internal static string Cookies(HttpResponseMessage response) => response.Headers.TryGetValues("Set-Cookie",out var values) ? string.Join("; ",values.Select(v=>v.Split(';')[0])) : "";
+    internal static async Task<HttpResponseMessage> SignIn(GoogleApiFactory factory,HttpClient client,string sub,string email,string? nonceOverride=null,bool verified=true)
     {
         var start=await client.GetAsync("/api/v1/auth/google/login");Assert.Equal(HttpStatusCode.Redirect,start.StatusCode);
         var query=QueryHelpers.ParseQuery(start.Headers.Location!.Query);
@@ -80,6 +77,15 @@ public sealed class GoogleIntegrationTests : IClassFixture<GoogleApiFactory>
         var request=new HttpRequestMessage(HttpMethod.Get,GoogleAuthentication.Callback+"?code="+code+"&state="+Uri.EscapeDataString(query["state"].ToString()));
         request.Headers.Add("Cookie",Cookies(start));return await client.SendAsync(request);
     }
+}
+public sealed class GoogleIntegrationTests : IClassFixture<GoogleApiFactory>
+{
+    private readonly GoogleApiFactory factory;
+    private readonly HttpClient client;
+    public GoogleIntegrationTests(GoogleApiFactory factory) { this.factory=factory;client=factory.CreateClient(new(){HandleCookies=false,AllowAutoRedirect=false}); }
+    private static string Cookies(HttpResponseMessage response) => GoogleTestFlow.Cookies(response);
+    private Task<HttpResponseMessage> SignIn(string sub,string email,string? nonceOverride=null,bool verified=true)
+        => GoogleTestFlow.SignIn(factory,client,sub,email,nonceOverride,verified);
     [Fact]
     public async Task GoogleLoginCreatesPasswordlessUserAndReusesInternalId()
     {

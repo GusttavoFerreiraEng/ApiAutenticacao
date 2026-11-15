@@ -234,10 +234,10 @@ public sealed class AccessCompatibilityTests
         foreach (var header in headers.Where(h => h.StartsWith("jwt=") || h.StartsWith("refreshToken=")))
         {
             var flags = header.Split(';').Skip(1).Select(x => x.Trim()).ToArray();
-            Assert.True(flags.Any(x => x.Equals("httponly", StringComparison.OrdinalIgnoreCase)));
-            Assert.True(flags.Any(x => x.Equals("samesite=strict", StringComparison.OrdinalIgnoreCase)));
-            Assert.False(flags.Any(x => x.StartsWith("domain=", StringComparison.OrdinalIgnoreCase)));
-            Assert.False(flags.Any(x => x.Equals("secure", StringComparison.OrdinalIgnoreCase)));
+            Assert.Contains(flags, x => x.Equals("httponly", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(flags, x => x.Equals("samesite=strict", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(flags, x => x.StartsWith("domain=", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(flags, x => x.Equals("secure", StringComparison.OrdinalIgnoreCase));
         }
         var token = Token(login, "jwt");
         var logout = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/logout");

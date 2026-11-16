@@ -66,6 +66,8 @@ public sealed class GoogleAccountService(AppDbContext db, SessionService session
         if (await db.ExternalLogins.AnyAsync(l => l.Provider == "google" && (l.Subject == identity.Subject || l.UserId == user.Id), ct)) return null;
         db.ExternalLogins.Add(new ExternalLogin { Provider = "google", Subject = identity.Subject, User = user });
         user.EmailConfirmed = true; user.EmailConfirmationToken = null; user.EmailConfirmationTokenExpires = null;
+        // O vínculo é uma nova prova de identidade e invalida recuperações anteriores.
+        user.PasswordResetToken = null; user.ResetTokenExpires = null;
         user.AccessFailedCount = 0; user.LockoutEnd = null;
         user.SecurityStamp = Guid.NewGuid().ToString();
         await sessions.RevokeAllAsync(user.Id, ct);

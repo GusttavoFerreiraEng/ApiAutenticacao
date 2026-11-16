@@ -39,7 +39,8 @@ public sealed class SessionService(AppDbContext db, IConfiguration configuration
 
     public async Task<Result<(string AccessToken, string RefreshToken)>> RefreshAsync(string raw, CancellationToken ct)
     {
-        if (!TrySessionId(raw, out var sid)) return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
+        if (!TrySessionId(raw, out var sid) || !ValidRefreshSignature(raw))
+            return Result<(string, string)>.Failure(AuthErrors.InvalidToken);
         // O bloqueio é no MySQL, portanto também protege múltiplas instâncias da API.
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
         var session = await LockAsync(sid, tx, ct);
@@ -121,10 +122,23 @@ public sealed class SessionService(AppDbContext db, IConfiguration configuration
 
     private string RefreshValue(RefreshToken session)
     {
-        var payload = $"{session.SessionId}.{session.TokenVersion.ToString(CultureInfo.InvariantCulture)}";
+        return RefreshValue(session.SessionId!, session.TokenVersion.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private string RefreshValue(string sid, string version)
+    {
+        var payload = $"{sid}.{version}";
         // Separação de domínio: uma assinatura de refresh não é uma assinatura JWT.
         var signature = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes("prevention-refresh-v1:" + payload));
         return payload + "." + Base64UrlEncoder.Encode(signature);
+    }
+
+    private bool ValidRefreshSignature(string raw)
+    {
+        var parts = raw.Split('.'); // TrySessionId já validou tamanho e formato.
+        var expected = RefreshValue(parts[0], parts[1]);
+        // Um hash armazenado anteriormente não autoriza renovação após troca da chave.
+        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(raw), Encoding.UTF8.GetBytes(expected));
     }
 
     private static bool TrySessionId(string raw, out string sid)

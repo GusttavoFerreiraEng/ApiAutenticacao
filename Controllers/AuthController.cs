@@ -69,10 +69,11 @@ namespace ApiAutenticacao.Controllers
 
             var result = await _authService.RegistrarAsync(registerDto, cancellationToken);
             
-            if (result.IsFailure)
+            // A resposta pública não revela se este e-mail já possui uma identidade.
+            if (result.IsFailure && result.Error != AuthErrors.EmailAlreadyExists)
                 return HandleFailure(result);
 
-            return Ok(new MessageResponseDTO("Usuário cadastrado com sucesso."));
+            return Ok(new MessageResponseDTO("Confira seu e-mail para continuar. Se já possui conta, entre ou recupere sua senha."));
         }
 
         [HttpPost("login")]
@@ -87,7 +88,8 @@ namespace ApiAutenticacao.Controllers
             var result = await _authService.LoginAsync(loginDto, cancellationToken);
 
             if (result.IsFailure)
-                return HandleFailure(result);
+                return HandleFailure(result.Error == AuthErrors.AccountLocked
+                    ? Result.Failure(AuthErrors.InvalidCredentials) : result);
 
             var (jwt, refreshToken) = result.Value;
             SetTokenCookies(jwt, refreshToken);
@@ -123,10 +125,10 @@ namespace ApiAutenticacao.Controllers
 
             var result = await _authService.ReenviarCodigoConfirmacaoAsync(request, cancellationToken);
 
-            if (result.IsFailure)
+            if (result.IsFailure && result.Error != AuthErrors.UserNotFound && result.Error.Code != "EmailAlreadyConfirmed")
                 return HandleFailure(result);
 
-            return Ok(new MessageResponseDTO("Um novo código foi gerado e enviado para o seu e-mail."));
+            return Ok(new MessageResponseDTO("Se houver uma confirmação pendente, enviaremos um código para esse e-mail."));
         }
 
         [HttpPost("forgot-password")]
@@ -219,6 +221,7 @@ namespace ApiAutenticacao.Controllers
 
         [Authorize]
         [HttpPost("change-password")]
+        [EnableRateLimiting("PasswordChangeRateLimit")]
         [Tags("3. Gestão de Perfil")]
         public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDTO dto, CancellationToken cancellationToken)
         {

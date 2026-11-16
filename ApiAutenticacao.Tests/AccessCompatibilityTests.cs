@@ -77,7 +77,7 @@ public sealed class AccessCompatibilityTests
         var login = await Login(client, "  " + user.Email.ToUpperInvariant() + "  ", user.Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         Assert.True(new JwtSecurityTokenHandler().ReadJwtToken(Token(login, "jwt")).Subject == user.Id.ToString());
-        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/v1/auth/register", new { email = user.Email.ToUpperInvariant(), password = Secret() })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/v1/auth/register", new { email = user.Email.ToUpperInvariant(), password = Secret() })).StatusCode);
         using var scope = factory.Services.CreateScope();
         Assert.Equal(1, await scope.ServiceProvider.GetRequiredService<AppDbContext>().Users.CountAsync(u => u.Email == user.Email));
     }

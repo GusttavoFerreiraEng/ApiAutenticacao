@@ -184,6 +184,17 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0
             }));
+    options.AddPolicy("PasswordChangeRateLimit", httpContext =>
+    {
+        var subject = httpContext.User.FindFirst("sub")?.Value ?? httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrWhiteSpace(subject))
+            return RateLimitPartition.GetNoLimiter("anonymous-password-change");
+        return RateLimitPartition.GetFixedWindowLimiter("password-change:" + subject, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = builder.Configuration.GetValue<int>("RateLimits:PasswordChangePerMinute", 5),
+            Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
+        });
+    });
     options.AddPolicy("ExternalLoginRateLimit", httpContext => RateLimitPartition.GetFixedWindowLimiter(
         httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
         { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));

@@ -43,8 +43,18 @@ namespace ApiAutenticacao.Services
                 EmailConfirmationTokenExpires = DateTimeOffset.UtcNow.AddMinutes(10)
             };
 
-            await _uow.Users.AddAsync(user, cancellationToken);
-            await _uow.CommitAsync(cancellationToken);
+            try
+            {
+                await _uow.Users.AddAsync(user, cancellationToken);
+                await _uow.CommitAsync(cancellationToken);
+            }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateException error)
+                when (error.InnerException is MySqlConnector.MySqlException { Number: 1062 })
+            {
+                // O índice também reserva e-mails excluídos logicamente e resolve
+                // cadastros concorrentes. Nunca reativar ou substituir a identidade.
+                return Result.Failure(AuthErrors.EmailAlreadyExists);
+            }
             try
             {
                 await _emailService.EnviarEmailAsync(
@@ -246,6 +256,9 @@ namespace ApiAutenticacao.Services
             return Result.Failure(new Error("InvalidCurrentPassword", "A senha atual está incorreta."));
 
             user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NovaSenha, workFactor: 11);
+            // Uma prova de recuperação anterior não pode desfazer a troca autenticada.
+            user.PasswordResetToken = null;
+            user.ResetTokenExpires = null;
             user.SecurityStamp = Guid.NewGuid().ToString();
             await _sessions.RevokeAllAsync(user.Id, cancellationToken);
 

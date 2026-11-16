@@ -30,7 +30,7 @@ namespace ApiAutenticacao.Tests
         }
 
         [Fact]
-        public async Task Register_DeveRetornar409_QuandoEmailDuplicado()
+        public async Task Register_DeveRetornar200SemDuplicar_QuandoEmailDuplicado()
         {
             var emailUnico = $"duplicado_{Guid.NewGuid()}@gmail.com";
             var request = new { Email = emailUnico, Password = "SenhaSegura123!" };
@@ -38,7 +38,9 @@ namespace ApiAutenticacao.Tests
             await _client.PostAsJsonAsync("/api/v1/auth/register", request);
             var response = await _client.PostAsJsonAsync("/api/v1/auth/register", request);
 
-            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var scope = _factory.Services.CreateScope();
+            Assert.Equal(1, scope.ServiceProvider.GetRequiredService<AppDbContext>().Users.Count(u => u.Email == emailUnico));
         }
 
         [Fact]
